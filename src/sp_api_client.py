@@ -113,6 +113,8 @@ def _parse_all_orders(text: str) -> pd.DataFrame:
 
     qty = pd.to_numeric(col("quantity", "quantity-purchased"), errors="coerce").fillna(0).astype(int)
     price = pd.to_numeric(col("item-price"), errors="coerce").fillna(0.0)
+    # 수량 0 인 행은 NaN 으로 나눠 단가를 비우고, 이후 라인금액으로 보정 (object dtype 회피)
+    unit_price = price.div(qty.where(qty != 0)).round(2).fillna(price).round(2)
 
     out = pd.DataFrame(
         {
@@ -123,7 +125,7 @@ def _parse_all_orders(text: str) -> pd.DataFrame:
             "product_name": col("product-name"),
             "quantity": qty,
             "item_price": price.round(2),
-            "unit_price": (price / qty.replace(0, pd.NA)).round(2).fillna(price),
+            "unit_price": unit_price,
             "order_status": col("item-status", "order-status"),
         }
     )
