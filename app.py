@@ -203,29 +203,38 @@ with tab_inventory:
   elif inventory.empty:
     st.info("표시할 재고 데이터가 없습니다. (FBA 미사용 계정일 수 있습니다.)")
   else:
-    low_stock = inventory[inventory["fulfillable_quantity"] < 50]
-    if not low_stock.empty:
-        st.warning(f"⚠️ 재입고 검토가 필요한 상품 {len(low_stock)}개 (가용 재고 50개 미만)")
+    # 총 재고 0(단종/옛날 상품)은 숨긴다
+    active = inventory[inventory["total_quantity"] > 0]
+    hidden = len(inventory) - len(active)
 
-    inv_chart = inventory.sort_values("total_quantity").copy()
-    inv_chart["상품"] = inv_chart["product_name"].map(short_name)
-    fig = px.bar(
-        inv_chart,
-        x="total_quantity",
-        y="상품",
-        orientation="h",
-        title="상품별 총 재고",
-        labels={"total_quantity": "총 수량"},
-        hover_data={"product_name": True, "상품": False},
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    if active.empty:
+        st.info("현재 재고가 있는 상품이 없습니다.")
+    else:
+        low_stock = active[active["fulfillable_quantity"] < 50]
+        if not low_stock.empty:
+            st.warning(f"⚠️ 재입고 검토가 필요한 상품 {len(low_stock)}개 (가용 재고 50개 미만)")
+        if hidden:
+            st.caption(f"재고 0인 상품 {hidden}개는 숨겼습니다.")
 
-    st.subheader("재고 상세")
-    st.dataframe(
-        shorten_products(inventory.sort_values("fulfillable_quantity")),
-        use_container_width=True,
-        hide_index=True,
-    )
+        inv_chart = active.sort_values("total_quantity").copy()
+        inv_chart["상품"] = inv_chart["product_name"].map(short_name)
+        fig = px.bar(
+            inv_chart,
+            x="total_quantity",
+            y="상품",
+            orientation="h",
+            title="상품별 총 재고",
+            labels={"total_quantity": "총 수량"},
+            hover_data={"product_name": True, "상품": False},
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("재고 상세")
+        st.dataframe(
+            shorten_products(active.sort_values("fulfillable_quantity")),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 # ── 정산/수익 탭 ─────────────────────────────────────────
 with tab_finance:
