@@ -90,15 +90,38 @@ def _fetch_report_text(
     raise RuntimeError(f"리포트 생성 실패: {last_status}")
 
 
-def orders(settings: Settings, days: int = 90) -> pd.DataFrame:
-    """Reports API 로 전체 주문 데이터를 한 번에 받아 DataFrame 으로 반환한다.
+_ORDERS_CHUNK_DAYS = 30
 
-    개별 getOrders/getOrderItems 호출은 한도가 매우 낮아 데이터가 많으면
-    바로 throttling 된다. 대신 'All Orders' 플랫파일 리포트를 생성·다운로드한다.
+
+def orders(settings: Settings, days: int = 90) -> pd.DataFrame:
+    """Reports API 로 주문 데이터를 받아 DataFrame 으로 반환한다.
+
+    'All Orders by Order Date' 리포트는 한 번에 너무 긴 기간을 요청하면 빈
+    결과가 오므로, 30일 단위로 나눠 여러 번 받아 합친다. 경계의 중복 주문은
+    제거한다. (개별 getOrders/getOrderItems 는 한도가 낮아 사용하지 않는다.)
     """
-    start = _iso(datetime.now(timezone.utc) - timedelta(days=days))
-    text = _fetch_report_text(settings, _ALL_ORDERS_REPORT, dataStartTime=start)
-    return _parse_all_orders(text)
+    end = datetime.now(timezone.utc)
+    remaining = max(days, 1)
+    frames: list[pd.DataFrame] = []
+
+    chunk_end = end
+    while remaining > 0:
+        chunk_days = min(_ORDERS_CHUNK_DAYS, remaining)
+        chunk_start = chunk_end - timedelta(days=chunk_days)
+        text = _fetch_report_text(
+            settings,
+            _ALL_ORDERS_REPORT,
+            dataStartTime=_iso(chunk_start),
+            dataEndTime=_iso(chunk_end),
+        )
+        frames.append(_parse_all_orders(text))
+        chunk_end = chunk_start
+        remaining -= chunk_days
+
+    df = pd.concat(frames, ignore_index=True) if frames else _empty_orders()
+    if not df.empty:
+        df = df.drop_duplicates(subset=["amazon_order_id", "sku"]).reset_index(drop=True)
+    return df
 
 
 def _download_report_text(doc_payload: dict) -> str:
