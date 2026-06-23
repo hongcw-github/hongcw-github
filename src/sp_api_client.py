@@ -32,7 +32,8 @@ def _marketplace(settings: Settings):
 def orders(settings: Settings, days: int = 90) -> pd.DataFrame:
     from sp_api.api import Orders
 
-    client = Orders(credentials=_credentials(settings), marketplace=_marketplace(settings))
+    mp = _marketplace(settings)
+    client = Orders(credentials=_credentials(settings), marketplace=mp)
     created_after = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     rows: list[dict] = []
@@ -41,7 +42,10 @@ def orders(settings: Settings, days: int = 90) -> pd.DataFrame:
         if next_token:
             resp = client.get_orders(NextToken=next_token)
         else:
-            resp = client.get_orders(CreatedAfter=created_after)
+            # getOrders 는 MarketplaceIds 가 필수 파라미터다.
+            resp = client.get_orders(
+                CreatedAfter=created_after, MarketplaceIds=[mp.marketplace_id]
+            )
 
         payload = resp.payload or {}
         for o in payload.get("Orders", []):

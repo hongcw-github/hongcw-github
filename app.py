@@ -54,14 +54,25 @@ def _safe_load(loader, label, *args):
         return loader(*args)
     except Exception as e:  # noqa: BLE001
         name = type(e).__name__
+        msg = str(e)
         st.error(f"❌ **{label}** 데이터를 불러오지 못했습니다 — `{name}`")
-        if "Authorization" in name or "auth" in name.lower():
+        if "invalid_client" in msg:
             st.warning(
-                "**LWA 인증 실패**입니다. SP-API 자격증명을 확인하세요:\n"
-                "- `SP_API_LWA_APP_ID` (Client ID) 가 정확한가\n"
-                "- `SP_API_LWA_CLIENT_SECRET` 가 정확한가 (App ID 가 아니라 Secret)\n"
-                "- `SP_API_REFRESH_TOKEN` 이 **이 앱에서** 발급한 값이고 잘리지 않았는가\n"
-                "- 세 값 모두 앞뒤 공백/따옴표가 없는가"
+                "**`invalid_client`** — Client ID + Client Secret 조합을 아마존이 거부했습니다.\n"
+                "- `SP_API_LWA_CLIENT_SECRET` 가 LWA credentials 의 **Client Secret** 인지 확인 "
+                "(앱 ID `amzn1.sp.solution.~` 이 아니라 Secret)\n"
+                "- Secret 이 잘리지 않고 전체가 들어갔는지\n"
+                "- Client ID 와 Secret 이 **같은 앱**의 값인지"
+            )
+        elif "invalid_grant" in msg:
+            st.warning(
+                "**`invalid_grant`** — Refresh Token 이 잘못/만료되었거나 다른 앱 것입니다.\n"
+                "- 이 앱에서 **Authorize → Authorize app** 으로 새 Refresh Token 을 발급해 "
+                "`SP_API_REFRESH_TOKEN` 에 다시 넣으세요."
+            )
+        elif "Authorization" in name or "auth" in name.lower():
+            st.warning(
+                "**LWA 인증 실패**입니다. SP-API 자격증명 3개(Client ID/Secret/Refresh Token)를 확인하세요."
             )
         with st.expander("자세한 오류 메시지"):
             st.code(str(e) or "(빈 메시지)")
