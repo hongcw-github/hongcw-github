@@ -70,6 +70,11 @@ def _safe_load(loader, label, *args):
                 "- 이 앱에서 **Authorize → Authorize app** 으로 새 Refresh Token 을 발급해 "
                 "`SP_API_REFRESH_TOKEN` 에 다시 넣으세요."
             )
+        elif "Throttled" in name or "QuotaExceeded" in msg:
+            st.warning(
+                "**호출 한도 초과(throttling)** 입니다. 잠시(1~2분) 후 **새로고침** 을 눌러보세요. "
+                "리포트 기반 조회로 바뀌었지만, 짧은 시간에 여러 번 새로고침하면 다시 걸릴 수 있습니다."
+            )
         elif "Authorization" in name or "auth" in name.lower():
             st.warning(
                 "**LWA 인증 실패**입니다. SP-API 자격증명 3개(Client ID/Secret/Refresh Token)를 확인하세요."

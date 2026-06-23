@@ -8,6 +8,9 @@ import 시점에 sp_api 패키지가 없어도 앱이 죽지 않도록 지연 im
 """
 from __future__ import annotations
 
+import gzip
+import io
+import time
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -34,70 +37,133 @@ def _marketplace(settings: Settings):
     return getattr(Marketplaces, settings.marketplace, Marketplaces.US)
 
 
+# 주문 + 상품을 한 번에 받는 플랫파일 리포트 (주문건마다 호출하지 않아 throttling 회피)
+_ALL_ORDERS_REPORT = "GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL"
+
+
 def orders(settings: Settings, days: int = 90) -> pd.DataFrame:
-    from sp_api.api import Orders
+    """Reports API 로 전체 주문 데이터를 한 번에 받아 DataFrame 으로 반환한다.
+
+    개별 getOrders/getOrderItems 호출은 한도가 매우 낮아 데이터가 많으면
+    바로 throttling 된다. 대신 'All Orders' 플랫파일 리포트를 생성·다운로드한다.
+    """
+    from sp_api.api import Reports
 
     mp = _marketplace(settings)
-    client = Orders(credentials=_credentials(settings), marketplace=mp)
-    created_after = _iso(datetime.now(timezone.utc) - timedelta(days=days))
+    client = Reports(credentials=_credentials(settings), marketplace=mp)
+    start = _iso(datetime.now(timezone.utc) - timedelta(days=days))
 
-    rows: list[dict] = []
-    next_token: str | None = None
-    while True:
-        if next_token:
-            resp = client.get_orders(NextToken=next_token)
-        else:
-            # getOrders 는 MarketplaceIds 가 필수 파라미터다.
-            resp = client.get_orders(
-                CreatedAfter=created_after, MarketplaceIds=[mp.marketplace_id]
-            )
+    # 1) 리포트 생성 요청
+    created = _retry(
+        lambda: client.create_report(
+            reportType=_ALL_ORDERS_REPORT,
+            dataStartTime=start,
+            marketplaceIds=[mp.marketplace_id],
+        )
+    )
+    report_id = created.payload["reportId"]
 
-        payload = resp.payload or {}
-        for o in payload.get("Orders", []):
-            order_id = o.get("AmazonOrderId")
-            purchase = o.get("PurchaseDate")
-            status = o.get("OrderStatus")
-            # 주문 항목(라인 아이템)은 별도 호출
-            for item in _order_items(client, order_id):
-                price = float(item.get("ItemPrice", {}).get("Amount", 0) or 0)
-                qty = int(item.get("QuantityOrdered", 0) or 0)
-                rows.append(
-                    {
-                        "amazon_order_id": order_id,
-                        "purchase_date": pd.to_datetime(purchase),
-                        "sku": item.get("SellerSKU"),
-                        "asin": item.get("ASIN"),
-                        "product_name": item.get("Title"),
-                        "quantity": qty,
-                        "item_price": price,
-                        "unit_price": round(price / qty, 2) if qty else price,
-                        "order_status": status,
-                    }
-                )
-        next_token = payload.get("NextToken")
-        if not next_token:
+    # 2) 처리 완료까지 폴링 (보통 수십 초)
+    document_id = None
+    for _ in range(60):  # 최대 ~5분
+        report = _retry(lambda: client.get_report(report_id))
+        status = report.payload.get("processingStatus")
+        if status == "DONE":
+            document_id = report.payload.get("reportDocumentId")
             break
+        if status in ("CANCELLED", "FATAL"):
+            raise RuntimeError(f"리포트 생성 실패: {status}")
+        time.sleep(5)
 
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df["purchase_date"] = pd.to_datetime(df["purchase_date"]).dt.tz_localize(None)
-    return df
+    if not document_id:
+        raise TimeoutError("리포트 처리 시간이 초과되었습니다. 잠시 후 다시 시도하세요.")
+
+    # 3) 리포트 문서 다운로드 → TSV 파싱
+    doc = _retry(lambda: client.get_report_document(document_id))
+    text = _download_report_text(doc.payload)
+    return _parse_all_orders(text)
 
 
-def _order_items(client, order_id: str) -> list[dict]:
-    items: list[dict] = []
-    next_token: str | None = None
-    while True:
-        if next_token:
-            resp = client.get_order_items(order_id, NextToken=next_token)
-        else:
-            resp = client.get_order_items(order_id)
-        payload = resp.payload or {}
-        items.extend(payload.get("OrderItems", []))
-        next_token = payload.get("NextToken")
-        if not next_token:
-            break
-    return items
+def _download_report_text(doc_payload: dict) -> str:
+    import requests
+
+    raw = requests.get(doc_payload["url"], timeout=60).content
+    if doc_payload.get("compressionAlgorithm") == "GZIP":
+        raw = gzip.decompress(raw)
+    # 플랫파일 리포트는 보통 cp1252/latin-1 또는 utf-8
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("iso-8859-1", errors="replace")
+
+
+def _parse_all_orders(text: str) -> pd.DataFrame:
+    if not text.strip():
+        return _empty_orders()
+
+    df = pd.read_csv(io.StringIO(text), sep="\t", dtype=str)
+    if df.empty:
+        return _empty_orders()
+
+    def col(*names: str):
+        for n in names:
+            if n in df.columns:
+                return df[n]
+        return pd.Series([None] * len(df))
+
+    qty = pd.to_numeric(col("quantity", "quantity-purchased"), errors="coerce").fillna(0).astype(int)
+    price = pd.to_numeric(col("item-price"), errors="coerce").fillna(0.0)
+
+    out = pd.DataFrame(
+        {
+            "amazon_order_id": col("amazon-order-id"),
+            "purchase_date": pd.to_datetime(col("purchase-date"), errors="coerce", utc=True),
+            "sku": col("sku"),
+            "asin": col("asin"),
+            "product_name": col("product-name"),
+            "quantity": qty,
+            "item_price": price.round(2),
+            "unit_price": (price / qty.replace(0, pd.NA)).round(2).fillna(price),
+            "order_status": col("item-status", "order-status"),
+        }
+    )
+    out["purchase_date"] = out["purchase_date"].dt.tz_localize(None)
+    # 상태값을 대시보드 표준(Shipped/Pending/Canceled)에 맞게 정규화
+    out["order_status"] = out["order_status"].astype(str).str.title().replace(
+        {"Cancelled": "Canceled"}
+    )
+    return out
+
+
+def _empty_orders() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "amazon_order_id",
+            "purchase_date",
+            "sku",
+            "asin",
+            "product_name",
+            "quantity",
+            "item_price",
+            "unit_price",
+            "order_status",
+        ]
+    )
+
+
+def _retry(call, attempts: int = 4, base_delay: float = 3.0):
+    """SP-API throttling(QuotaExceeded) 발생 시 지수 백오프로 재시도."""
+    last = None
+    for i in range(attempts):
+        try:
+            return call()
+        except Exception as e:  # noqa: BLE001
+            last = e
+            if "Throttled" in type(e).__name__ or "QuotaExceeded" in str(e):
+                time.sleep(base_delay * (2**i))
+                continue
+            raise
+    raise last
 
 
 def inventory(settings: Settings) -> pd.DataFrame:
@@ -110,7 +176,7 @@ def inventory(settings: Settings) -> pd.DataFrame:
         kwargs = {"details": True, "marketplaceIds": [_marketplace(settings).marketplace_id]}
         if next_token:
             kwargs["nextToken"] = next_token
-        resp = client.get_inventory_summary_marketplace(**kwargs)
+        resp = _retry(lambda: client.get_inventory_summary_marketplace(**kwargs))
         payload = resp.payload or {}
         for s in payload.get("inventorySummaries", []):
             details = s.get("inventoryDetails", {}) or {}
@@ -155,9 +221,9 @@ def finances(settings: Settings, days: int = 90) -> pd.DataFrame:
     next_token: str | None = None
     while True:
         if next_token:
-            resp = client.list_financial_events(NextToken=next_token)
+            resp = _retry(lambda: client.list_financial_events(NextToken=next_token))
         else:
-            resp = client.list_financial_events(PostedAfter=posted_after)
+            resp = _retry(lambda: client.list_financial_events(PostedAfter=posted_after))
         payload = resp.payload or {}
         events = payload.get("FinancialEvents", {})
 
