@@ -119,9 +119,92 @@ def orders(settings: Settings, days: int = 90) -> pd.DataFrame:
         remaining -= chunk_days
 
     df = pd.concat(frames, ignore_index=True) if frames else _empty_orders()
+
+    # 리포트는 최근 ~48시간을 제외하므로, 최근 며칠은 실시간 Orders API 로 보강한다.
+    try:
+        recent = _recent_orders(settings, days=3)
+        if not recent.empty:
+            df = pd.concat([df, recent], ignore_index=True)
+    except Exception:  # noqa: BLE001  보강 실패해도 리포트 데이터는 유지
+        pass
+
     if not df.empty:
-        df = df.drop_duplicates(subset=["amazon_order_id", "sku"]).reset_index(drop=True)
+        # 최신(실시간) 값이 리포트보다 우선하도록 keep="last"
+        df = df.drop_duplicates(
+            subset=["amazon_order_id", "sku"], keep="last"
+        ).reset_index(drop=True)
     return df
+
+
+def _recent_orders(settings: Settings, days: int = 3) -> pd.DataFrame:
+    """최근 며칠 주문을 실시간 Orders API 로 받아 리포트와 같은 스키마로 반환.
+
+    기간이 짧아 호출 수가 적으므로 throttling 위험이 낮다.
+    """
+    from sp_api.api import Orders
+
+    mp = _marketplace(settings)
+    client = Orders(credentials=_credentials(settings), marketplace=mp)
+    created_after = _iso(datetime.now(timezone.utc) - timedelta(days=days))
+
+    rows: list[dict] = []
+    next_token: str | None = None
+    while True:
+        if next_token:
+            resp = _retry(lambda: client.get_orders(NextToken=next_token))
+        else:
+            resp = _retry(
+                lambda: client.get_orders(
+                    CreatedAfter=created_after, MarketplaceIds=[mp.marketplace_id]
+                )
+            )
+        payload = resp.payload or {}
+        for o in payload.get("Orders", []):
+            order_id = o.get("AmazonOrderId")
+            purchase = o.get("PurchaseDate")
+            status = (o.get("OrderStatus") or "").title().replace("Cancelled", "Canceled")
+            for item in _order_items(client, order_id):
+                price = float((item.get("ItemPrice") or {}).get("Amount", 0) or 0)
+                qty = int(item.get("QuantityOrdered", 0) or 0)
+                rows.append(
+                    {
+                        "amazon_order_id": order_id,
+                        "purchase_date": purchase,
+                        "sku": item.get("SellerSKU"),
+                        "asin": item.get("ASIN"),
+                        "product_name": item.get("Title"),
+                        "quantity": qty,
+                        "item_price": round(price, 2),
+                        "unit_price": round(price / qty, 2) if qty else price,
+                        "order_status": status,
+                    }
+                )
+        next_token = payload.get("NextToken")
+        if not next_token:
+            break
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["purchase_date"] = pd.to_datetime(
+            df["purchase_date"], utc=True, errors="coerce"
+        ).dt.tz_localize(None)
+    return df
+
+
+def _order_items(client, order_id: str) -> list[dict]:
+    items: list[dict] = []
+    next_token: str | None = None
+    while True:
+        if next_token:
+            resp = _retry(lambda: client.get_order_items(order_id, NextToken=next_token))
+        else:
+            resp = _retry(lambda: client.get_order_items(order_id))
+        payload = resp.payload or {}
+        items.extend(payload.get("OrderItems", []))
+        next_token = payload.get("NextToken")
+        if not next_token:
+            break
+    return items
 
 
 def _download_report_text(doc_payload: dict) -> str:
