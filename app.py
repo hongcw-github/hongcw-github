@@ -134,6 +134,19 @@ if "purchase_date" in orders.columns:
 inventory, inventory_err = _safe_load(load_inventory, _EMPTY_INVENTORY)
 finances, finances_err = _safe_load(load_finances, _EMPTY_FINANCES, days)
 
+# 재고 리포트에 상품명이 없을 때(SKU 로만 표시), 주문 데이터의 SKU→상품명으로 보강
+if not orders.empty and not inventory.empty:
+    name_map = (
+        orders.dropna(subset=["sku", "product_name"])
+        .drop_duplicates("sku")
+        .set_index("sku")["product_name"]
+        .to_dict()
+    )
+    if name_map:
+        mapped = inventory["sku"].map(name_map)
+        inventory = inventory.copy()
+        inventory["product_name"] = mapped.where(mapped.notna(), inventory["product_name"])
+
 if not orders.empty:
     orders = orders[orders["purchase_date"] >= (pd.Timestamp.now() - pd.Timedelta(days=days))]
 shipped = orders[orders["order_status"] == "Shipped"]
