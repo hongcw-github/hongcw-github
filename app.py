@@ -41,9 +41,18 @@ def load_finances(days: int) -> pd.DataFrame:
 
 
 def short_name(name, n: int = 40) -> str:
-    """차트 축 라벨용으로 긴 상품명을 줄인다 (전체 이름은 표에서 확인)."""
+    """긴 상품명을 줄인다 (차트 축 라벨/표 셀 공통)."""
     s = str(name)
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def shorten_products(df: pd.DataFrame, n: int = 50) -> pd.DataFrame:
+    """표시용으로 product_name 컬럼을 줄인 복사본을 돌려준다."""
+    if "product_name" not in df.columns:
+        return df
+    out = df.copy()
+    out["product_name"] = out["product_name"].map(lambda x: short_name(x, n))
+    return out
 
 
 # ── 사이드바 ─────────────────────────────────────────────
@@ -182,7 +191,7 @@ with tab_sales:
         st.plotly_chart(fig3, use_container_width=True)
 
     st.subheader("상품별 요약")
-    st.dataframe(by_product, use_container_width=True, hide_index=True)
+    st.dataframe(shorten_products(by_product), use_container_width=True, hide_index=True)
 
 # ── 재고 탭 ──────────────────────────────────────────────
 with tab_inventory:
@@ -210,7 +219,7 @@ with tab_inventory:
 
     st.subheader("재고 상세")
     st.dataframe(
-        inventory.sort_values("fulfillable_quantity"),
+        shorten_products(inventory.sort_values("fulfillable_quantity")),
         use_container_width=True,
         hide_index=True,
     )
