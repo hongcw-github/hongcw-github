@@ -54,51 +54,76 @@ st.sidebar.caption(f"⏱️ 데이터는 {CACHE_TTL // 60}분간 캐시됩니다
 if settings.data_source == "live" and not settings.has_sp_api_credentials:
     st.sidebar.warning("live 모드인데 SP-API 자격증명이 없어 mock 으로 표시 중입니다. `.env` 를 확인하세요.")
 
-# ── 데이터 로드 ──────────────────────────────────────────
-def _safe_load(loader, label, *args):
-    """SP-API 호출 실패 시 앱이 죽지 않고 원인 힌트를 보여준다."""
+# ── 데이터 로드 (탭별 독립: 하나가 막혀도 나머지는 보여준다) ──────────────
+def _empty(columns: dict) -> pd.DataFrame:
+    return pd.DataFrame({c: pd.Series(dtype=t) for c, t in columns.items()})
+
+
+_EMPTY_ORDERS = {
+    "amazon_order_id": "object", "purchase_date": "datetime64[ns]", "sku": "object",
+    "asin": "object", "product_name": "object", "quantity": "int64",
+    "item_price": "float64", "unit_price": "float64", "order_status": "object",
+}
+_EMPTY_INVENTORY = {
+    "sku": "object", "asin": "object", "product_name": "object",
+    "fulfillable_quantity": "int64", "inbound_quantity": "int64",
+    "reserved_quantity": "int64", "total_quantity": "int64",
+}
+_EMPTY_FINANCES = {
+    "date": "datetime64[ns]", "revenue": "float64", "referral_fee": "float64",
+    "fba_fee": "float64", "product_cost": "float64", "units": "int64",
+    "total_fees": "float64", "net_profit": "float64",
+}
+
+
+def _safe_load(loader, empty_cols, *args):
+    """실패해도 앱을 멈추지 않고 (빈 DataFrame, 에러) 를 반환한다."""
     try:
-        return loader(*args)
+        return loader(*args), None
     except Exception as e:  # noqa: BLE001
-        name = type(e).__name__
-        msg = str(e)
-        st.error(f"❌ **{label}** 데이터를 불러오지 못했습니다 — `{name}`")
-        if "invalid_client" in msg:
-            st.warning(
-                "**`invalid_client`** — Client ID + Client Secret 조합을 아마존이 거부했습니다.\n"
-                "- `SP_API_LWA_CLIENT_SECRET` 가 LWA credentials 의 **Client Secret** 인지 확인 "
-                "(앱 ID `amzn1.sp.solution.~` 이 아니라 Secret)\n"
-                "- Secret 이 잘리지 않고 전체가 들어갔는지\n"
-                "- Client ID 와 Secret 이 **같은 앱**의 값인지"
-            )
-        elif "invalid_grant" in msg:
-            st.warning(
-                "**`invalid_grant`** — Refresh Token 이 잘못/만료되었거나 다른 앱 것입니다.\n"
-                "- 이 앱에서 **Authorize → Authorize app** 으로 새 Refresh Token 을 발급해 "
-                "`SP_API_REFRESH_TOKEN` 에 다시 넣으세요."
-            )
-        elif "Throttled" in name or "QuotaExceeded" in msg:
-            st.warning(
-                "**호출 한도 초과(throttling)** 입니다. 잠시(1~2분) 후 **새로고침** 을 눌러보세요. "
-                "리포트 기반 조회로 바뀌었지만, 짧은 시간에 여러 번 새로고침하면 다시 걸릴 수 있습니다."
-            )
-        elif "Authorization" in name or "auth" in name.lower():
-            st.warning(
-                "**LWA 인증 실패**입니다. SP-API 자격증명 3개(Client ID/Secret/Refresh Token)를 확인하세요."
-            )
-        with st.expander("자세한 오류 메시지"):
-            st.code(str(e) or "(빈 메시지)")
-        st.stop()
+        return _empty(empty_cols), e
 
 
-orders = _safe_load(load_orders, "주문/매출", days)
-inventory = _safe_load(load_inventory, "재고")
-finances = _safe_load(load_finances, "정산", days)
+def render_load_error(label, e):
+    name = type(e).__name__
+    msg = str(e)
+    st.error(f"❌ **{label}** 데이터를 불러오지 못했습니다 — `{name}`")
+    if "invalid_client" in msg:
+        st.warning(
+            "**`invalid_client`** — Client ID + Client Secret 조합을 아마존이 거부했습니다. "
+            "`SP_API_LWA_CLIENT_SECRET` 가 LWA credentials 의 **Client Secret** 인지 확인하세요."
+        )
+    elif "invalid_grant" in msg:
+        st.warning(
+            "**`invalid_grant`** — Refresh Token 이 잘못/만료되었습니다. "
+            "**Authorize → Authorize app** 으로 새 토큰을 발급해 다시 넣으세요."
+        )
+    elif "Throttled" in name or "QuotaExceeded" in msg:
+        st.warning("**호출 한도 초과** 입니다. 1~2분 후 **새로고침** 을 눌러주세요.")
+    elif "Forbidden" in name or "Unauthorized" in msg or "denied" in msg:
+        st.warning(
+            "**접근 권한 없음(403)** — 이 API 에 대한 role 이 없거나 계정이 해당 기능을 쓰지 않습니다.\n"
+            "- FBA 재고 API 는 **'Amazon Fulfillment' role** 이 필요합니다 (개발자 프로필에서 추가).\n"
+            "- FBA 를 쓰지 않는 계정이면 이 탭은 사용하지 않아도 됩니다."
+        )
+    elif "Authorization" in name or "auth" in name.lower():
+        st.warning("**LWA 인증 실패** — 자격증명 3개를 확인하세요.")
+    with st.expander("자세한 오류 메시지"):
+        st.code(msg or "(빈 메시지)")
 
-orders = orders[orders["purchase_date"] >= (pd.Timestamp.now() - pd.Timedelta(days=days))]
+
+orders, orders_err = _safe_load(load_orders, _EMPTY_ORDERS, days)
+inventory, inventory_err = _safe_load(load_inventory, _EMPTY_INVENTORY)
+finances, finances_err = _safe_load(load_finances, _EMPTY_FINANCES, days)
+
+if not orders.empty:
+    orders = orders[orders["purchase_date"] >= (pd.Timestamp.now() - pd.Timedelta(days=days))]
 shipped = orders[orders["order_status"] == "Shipped"]
 
 st.title("Amazon 셀러 대시보드")
+
+if orders_err:
+    render_load_error("주문/매출", orders_err)
 
 # ── 상단 KPI ─────────────────────────────────────────────
 total_revenue = float(shipped["item_price"].sum())
@@ -149,6 +174,11 @@ with tab_sales:
 
 # ── 재고 탭 ──────────────────────────────────────────────
 with tab_inventory:
+  if inventory_err:
+    render_load_error("재고", inventory_err)
+  elif inventory.empty:
+    st.info("표시할 재고 데이터가 없습니다. (FBA 미사용 계정일 수 있습니다.)")
+  else:
     low_stock = inventory[inventory["fulfillable_quantity"] < 50]
     if not low_stock.empty:
         st.warning(f"⚠️ 재입고 검토가 필요한 상품 {len(low_stock)}개 (가용 재고 50개 미만)")
@@ -172,7 +202,9 @@ with tab_inventory:
 
 # ── 정산/수익 탭 ─────────────────────────────────────────
 with tab_finance:
-    if finances.empty:
+    if finances_err:
+        render_load_error("정산", finances_err)
+    elif finances.empty:
         st.info("정산 데이터가 없습니다.")
     else:
         fin = finances[finances["date"] >= (pd.Timestamp.now() - pd.Timedelta(days=days))]
