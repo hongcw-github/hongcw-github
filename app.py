@@ -40,6 +40,12 @@ def load_finances(days: int) -> pd.DataFrame:
     return repository.get_finances(settings, days)
 
 
+def short_name(name, n: int = 40) -> str:
+    """차트 축 라벨용으로 긴 상품명을 줄인다 (전체 이름은 표에서 확인)."""
+    s = str(name)
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
 # ── 사이드바 ─────────────────────────────────────────────
 st.sidebar.title("📦 셀러 대시보드")
 mode = "🟡 Mock (샘플 데이터)" if settings.use_mock else "🟢 Live (SP-API)"
@@ -160,7 +166,13 @@ with tab_sales:
         .sort_values("revenue", ascending=False)
     )
     with col1:
-        fig2 = px.bar(by_product, x="revenue", y="product_name", orientation="h", title="상품별 매출")
+        by_product_chart = by_product.copy()
+        by_product_chart["상품"] = by_product_chart["product_name"].map(short_name)
+        fig2 = px.bar(
+            by_product_chart, x="revenue", y="상품", orientation="h",
+            title="상품별 매출", labels={"revenue": "매출 ($)"},
+            hover_data={"product_name": True, "상품": False},
+        )
         fig2.update_layout(yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig2, use_container_width=True)
     with col2:
@@ -183,13 +195,16 @@ with tab_inventory:
     if not low_stock.empty:
         st.warning(f"⚠️ 재입고 검토가 필요한 상품 {len(low_stock)}개 (가용 재고 50개 미만)")
 
+    inv_chart = inventory.sort_values("total_quantity").copy()
+    inv_chart["상품"] = inv_chart["product_name"].map(short_name)
     fig = px.bar(
-        inventory.sort_values("total_quantity"),
+        inv_chart,
         x="total_quantity",
-        y="product_name",
+        y="상품",
         orientation="h",
         title="상품별 총 재고",
-        labels={"total_quantity": "총 수량", "product_name": "상품"},
+        labels={"total_quantity": "총 수량"},
+        hover_data={"product_name": True, "상품": False},
     )
     st.plotly_chart(fig, use_container_width=True)
 
