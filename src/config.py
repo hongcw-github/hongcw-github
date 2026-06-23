@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # SP-API 마켓플레이스 코드 -> python-amazon-sp-api Marketplaces enum 이름 매핑에 사용
-DEFAULT_MARKETPLACE = "US"
+# RLSW 셀러 계정은 캐나다(amazon.ca) 기준이므로 기본값을 CA 로 둔다.
+DEFAULT_MARKETPLACE = "CA"
 
 
 @dataclass(frozen=True)
