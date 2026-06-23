@@ -185,18 +185,20 @@ with tab_sales:
 
     col1, col2 = st.columns(2)
     by_product = (
-        shipped.groupby("product_name")
-        .agg(revenue=("item_price", "sum"), units=("quantity", "sum"))
+        shipped.groupby("sku")
+        .agg(
+            revenue=("item_price", "sum"),
+            units=("quantity", "sum"),
+            product_name=("product_name", "first"),
+        )
         .reset_index()
         .sort_values("revenue", ascending=False)
     )
     with col1:
-        by_product_chart = by_product.copy()
-        by_product_chart["상품"] = by_product_chart["product_name"].map(short_name)
         fig2 = px.bar(
-            by_product_chart, x="revenue", y="상품", orientation="h",
-            title="상품별 매출", labels={"revenue": "매출 ($)"},
-            hover_data={"product_name": True, "상품": False},
+            by_product, x="revenue", y="sku", orientation="h",
+            title="SKU별 매출", labels={"revenue": "매출 ($)", "sku": "SKU"},
+            hover_data={"product_name": True},
         )
         fig2.update_layout(yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig2, use_container_width=True)
@@ -206,8 +208,12 @@ with tab_sales:
         fig3 = px.pie(status_counts, names="status", values="count", title="주문 상태 분포")
         st.plotly_chart(fig3, use_container_width=True)
 
-    st.subheader("상품별 요약")
-    st.dataframe(shorten_products(by_product), use_container_width=True, hide_index=True)
+    st.subheader("SKU별 요약")
+    st.dataframe(
+        shorten_products(by_product[["sku", "product_name", "revenue", "units"]]),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 # ── 재고 탭 ──────────────────────────────────────────────
 with tab_inventory:
@@ -230,15 +236,14 @@ with tab_inventory:
             st.caption(f"재고 0인 상품 {hidden}개는 숨겼습니다.")
 
         inv_chart = active.sort_values("total_quantity").copy()
-        inv_chart["상품"] = inv_chart["product_name"].map(short_name)
         fig = px.bar(
             inv_chart,
             x="total_quantity",
-            y="상품",
+            y="sku",
             orientation="h",
-            title="상품별 총 재고",
-            labels={"total_quantity": "총 수량"},
-            hover_data={"product_name": True, "상품": False},
+            title="SKU별 총 재고",
+            labels={"total_quantity": "총 수량", "sku": "SKU"},
+            hover_data={"product_name": True},
         )
         st.plotly_chart(fig, use_container_width=True)
 
