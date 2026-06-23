@@ -41,38 +41,53 @@ def _marketplace(settings: Settings):
 _ALL_ORDERS_REPORT = "GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL"
 
 
-def _fetch_report_text(settings: Settings, report_type: str, **create_kwargs) -> str:
-    """리포트를 생성→완료까지 폴링→문서 다운로드하여 본문 텍스트를 반환한다."""
+def _fetch_report_text(
+    settings: Settings, report_type: str, fatal_retries: int = 2, **create_kwargs
+) -> str:
+    """리포트를 생성→완료까지 폴링→문서 다운로드하여 본문 텍스트를 반환한다.
+
+    FATAL(아마존측 일시 실패)이 나면 몇 번 재생성한다.
+    """
     from sp_api.api import Reports
 
     mp = _marketplace(settings)
     client = Reports(credentials=_credentials(settings), marketplace=mp)
 
-    created = _retry(
-        lambda: client.create_report(
-            reportType=report_type,
-            marketplaceIds=[mp.marketplace_id],
-            **create_kwargs,
+    last_status = None
+    for attempt in range(fatal_retries + 1):
+        created = _retry(
+            lambda: client.create_report(
+                reportType=report_type,
+                marketplaceIds=[mp.marketplace_id],
+                **create_kwargs,
+            )
         )
-    )
-    report_id = created.payload["reportId"]
+        report_id = created.payload["reportId"]
 
-    document_id = None
-    for _ in range(60):  # 최대 ~5분
-        report = _retry(lambda: client.get_report(report_id))
-        status = report.payload.get("processingStatus")
-        if status == "DONE":
-            document_id = report.payload.get("reportDocumentId")
-            break
-        if status in ("CANCELLED", "FATAL"):
-            raise RuntimeError(f"리포트 생성 실패: {status}")
-        time.sleep(5)
+        document_id = None
+        for _ in range(60):  # 최대 ~5분
+            report = _retry(lambda: client.get_report(report_id))
+            status = report.payload.get("processingStatus")
+            if status == "DONE":
+                document_id = report.payload.get("reportDocumentId")
+                break
+            if status in ("CANCELLED", "FATAL"):
+                last_status = status
+                break
+            time.sleep(5)
 
-    if not document_id:
+        if document_id:
+            doc = _retry(lambda: client.get_report_document(document_id))
+            return _download_report_text(doc.payload)
+
+        if last_status == "FATAL" and attempt < fatal_retries:
+            time.sleep(5)  # 잠시 후 재생성
+            continue
+        if last_status in ("CANCELLED", "FATAL"):
+            raise RuntimeError(f"리포트 생성 실패: {last_status}")
         raise TimeoutError("리포트 처리 시간이 초과되었습니다. 잠시 후 다시 시도하세요.")
 
-    doc = _retry(lambda: client.get_report_document(document_id))
-    return _download_report_text(doc.payload)
+    raise RuntimeError(f"리포트 생성 실패: {last_status}")
 
 
 def orders(settings: Settings, days: int = 90) -> pd.DataFrame:
@@ -171,17 +186,25 @@ def _retry(call, attempts: int = 4, base_delay: float = 3.0):
 
 
 # FBA 재고 스냅샷 리포트 (실시간 FBA Inventory API 대신 사용 — 호출/권한이 더 관대)
+# 상세 리포트(수량 분해 포함). 실패 시 더 단순한 AFN 리포트로 폴백.
 _FBA_INVENTORY_REPORT = "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA"
+_AFN_INVENTORY_REPORT = "GET_AFN_INVENTORY_DATA"
 
 
 def inventory(settings: Settings) -> pd.DataFrame:
     """FBA 재고를 리포트로 받아 DataFrame 으로 반환한다.
 
     실시간 FBA Inventory API(getInventorySummaries)는 권한/엔드포인트 제약이
-    까다로워 403 이 잦다. 동일 데이터를 제공하는 재고 리포트를 사용한다.
+    까다로워 403 이 잦다. 상세 재고 리포트를 쓰되, FATAL 등으로 실패하면
+    더 단순하고 안정적인 AFN 재고 리포트로 폴백한다.
     """
-    text = _fetch_report_text(settings, _FBA_INVENTORY_REPORT)
-    return _parse_fba_inventory(text)
+    try:
+        text = _fetch_report_text(settings, _FBA_INVENTORY_REPORT)
+        return _parse_fba_inventory(text)
+    except (RuntimeError, TimeoutError):
+        # 상세 리포트가 FATAL/타임아웃이면 단순 AFN 리포트로 폴백
+        text = _fetch_report_text(settings, _AFN_INVENTORY_REPORT)
+        return _parse_fba_inventory(text)
 
 
 def _parse_fba_inventory(text: str) -> pd.DataFrame:
@@ -208,7 +231,8 @@ def _parse_fba_inventory(text: str) -> pd.DataFrame:
                 return df[n]
         return pd.Series([None] * len(df))
 
-    fulfillable = num("afn-fulfillable-quantity")
+    # 상세 리포트(afn-*) 또는 단순 AFN 리포트(Quantity Available) 컬럼 모두 지원
+    fulfillable = num("afn-fulfillable-quantity", "Quantity Available", "quantity-available")
     inbound = (
         num("afn-inbound-working-quantity")
         + num("afn-inbound-shipped-quantity")
@@ -219,11 +243,16 @@ def _parse_fba_inventory(text: str) -> pd.DataFrame:
     # 리포트에 total 이 비어 있으면 합산으로 보정
     total = total.where(total > 0, fulfillable + inbound + reserved)
 
+    sku = col("sku", "seller-sku")
+    # AFN 리포트에는 상품명이 없으므로 SKU 로 대체
+    product_name = col("product-name")
+    product_name = product_name.where(product_name.notna(), sku)
+
     return pd.DataFrame(
         {
-            "sku": col("sku", "seller-sku"),
+            "sku": sku,
             "asin": col("asin"),
-            "product_name": col("product-name"),
+            "product_name": product_name,
             "fulfillable_quantity": fulfillable,
             "inbound_quantity": inbound,
             "reserved_quantity": reserved,
