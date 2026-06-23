@@ -23,6 +23,11 @@ def _credentials(settings: Settings) -> dict:
     }
 
 
+def _iso(dt: datetime) -> str:
+    """SP-API 가 요구하는 ISO8601 형식(마이크로초 없는 'Z' 표기)으로 변환."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _marketplace(settings: Settings):
     from sp_api.base import Marketplaces
 
@@ -34,7 +39,7 @@ def orders(settings: Settings, days: int = 90) -> pd.DataFrame:
 
     mp = _marketplace(settings)
     client = Orders(credentials=_credentials(settings), marketplace=mp)
-    created_after = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    created_after = _iso(datetime.now(timezone.utc) - timedelta(days=days))
 
     rows: list[dict] = []
     next_token: str | None = None
@@ -144,7 +149,7 @@ def finances(settings: Settings, days: int = 90) -> pd.DataFrame:
     from sp_api.api import Finances
 
     client = Finances(credentials=_credentials(settings), marketplace=_marketplace(settings))
-    posted_after = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    posted_after = _iso(datetime.now(timezone.utc) - timedelta(days=days))
 
     daily: dict[str, dict] = {}
     next_token: str | None = None
