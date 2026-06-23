@@ -40,6 +40,29 @@ streamlit run app.py
 
 > 광고(ADS) 데이터는 별도의 **Amazon Ads API** 인증이 필요합니다. (`.env` 의 `ADS_*` 항목)
 
+## 클라우드 배포 (Streamlit Community Cloud)
+
+언제든 웹에서 접속할 수 있게 배포하는 무료 방법입니다. 자격증명은 레포에 넣지 않고
+Streamlit Cloud 의 **Secrets** 로 관리합니다.
+
+1. 이 레포를 GitHub 에 둔 상태에서 <https://share.streamlit.io> 에 GitHub 로 로그인
+2. **New app** → 이 레포 / 브랜치 / `app.py` 선택
+3. **Advanced settings → Secrets** 에 `.streamlit/secrets.toml.example` 형식대로 값 입력:
+   ```toml
+   DATA_SOURCE = "live"
+   SP_API_MARKETPLACE = "CA"
+   SP_API_LWA_APP_ID = "amzn1.application-oa2-client.xxxx"
+   SP_API_LWA_CLIENT_SECRET = "xxxx"
+   SP_API_REFRESH_TOKEN = "Atzr|xxxx"
+   ```
+4. **Deploy** → 발급된 URL 로 어디서나 접속
+
+코드(`src/config.py`)는 환경변수(`.env`)가 없으면 자동으로 **Streamlit Secrets** 를 읽으므로,
+로컬은 `.env`, 클라우드는 Secrets 로 동일하게 동작합니다.
+
+> ⚠️ 배포한 앱은 URL 을 아는 사람이 볼 수 있으므로, 비공개로 두려면 Streamlit Cloud 의
+> **앱 공유 설정에서 viewer 를 본인 계정으로 제한**하세요.
+
 ## 구조
 
 ```

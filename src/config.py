@@ -41,8 +41,24 @@ class Settings:
         return not self.has_sp_api_credentials
 
 
+def _secret(name: str) -> str | None:
+    """Streamlit Cloud 에 배포했을 때 st.secrets 에서 값을 읽는다.
+
+    로컬(.env)에서는 streamlit 런타임이 없을 수 있으므로 조용히 무시한다.
+    """
+    try:
+        import streamlit as st
+
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:
+        pass
+    return None
+
+
 def _get(name: str) -> str | None:
-    value = os.getenv(name)
+    # 우선순위: 환경변수(.env) → Streamlit Secrets
+    value = os.getenv(name) or _secret(name)
     return value.strip() if value and value.strip() else None
 
 
