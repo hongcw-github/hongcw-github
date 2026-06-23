@@ -155,18 +155,19 @@ def _parse_all_orders(text: str) -> pd.DataFrame:
 
 
 def _empty_orders() -> pd.DataFrame:
+    # purchase_date 는 반드시 datetime 타입이어야 .dt 접근이 깨지지 않는다
     return pd.DataFrame(
-        columns=[
-            "amazon_order_id",
-            "purchase_date",
-            "sku",
-            "asin",
-            "product_name",
-            "quantity",
-            "item_price",
-            "unit_price",
-            "order_status",
-        ]
+        {
+            "amazon_order_id": pd.Series(dtype="object"),
+            "purchase_date": pd.Series(dtype="datetime64[ns]"),
+            "sku": pd.Series(dtype="object"),
+            "asin": pd.Series(dtype="object"),
+            "product_name": pd.Series(dtype="object"),
+            "quantity": pd.Series(dtype="int64"),
+            "item_price": pd.Series(dtype="float64"),
+            "unit_price": pd.Series(dtype="float64"),
+            "order_status": pd.Series(dtype="object"),
+        }
     )
 
 

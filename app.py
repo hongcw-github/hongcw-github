@@ -128,6 +128,9 @@ def render_load_error(label, e):
 
 
 orders, orders_err = _safe_load(load_orders, _EMPTY_ORDERS, days)
+# 빈 결과(특히 긴 기간)에서 purchase_date 가 object 로 와도 .dt 가 깨지지 않도록 강제 변환
+if "purchase_date" in orders.columns:
+    orders["purchase_date"] = pd.to_datetime(orders["purchase_date"], errors="coerce")
 inventory, inventory_err = _safe_load(load_inventory, _EMPTY_INVENTORY)
 finances, finances_err = _safe_load(load_finances, _EMPTY_FINANCES, days)
 
