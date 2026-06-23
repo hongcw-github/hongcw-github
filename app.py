@@ -7,6 +7,8 @@ DATA_SOURCE=live 이고 SP-API 자격증명이 있으면 실제 데이터를 불
 """
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -18,18 +20,22 @@ st.set_page_config(page_title="Amazon 셀러 대시보드", page_icon="📦", la
 
 settings = load_settings()
 
+# 캐시 유지 시간(분). 세일즈가 잦지 않으므로 기본 30분.
+# 이 시간 안에는 실제 API 를 다시 부르지 않고, "새로고침" 버튼으로 즉시 갱신 가능.
+CACHE_TTL = int(os.getenv("CACHE_TTL_MINUTES", "30")) * 60
 
-@st.cache_data(ttl=600, show_spinner="데이터를 불러오는 중…")
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner="데이터를 불러오는 중…")
 def load_orders(days: int) -> pd.DataFrame:
     return repository.get_orders(settings, days)
 
 
-@st.cache_data(ttl=600, show_spinner="재고를 불러오는 중…")
+@st.cache_data(ttl=CACHE_TTL, show_spinner="재고를 불러오는 중…")
 def load_inventory() -> pd.DataFrame:
     return repository.get_inventory(settings)
 
 
-@st.cache_data(ttl=600, show_spinner="정산 데이터를 불러오는 중…")
+@st.cache_data(ttl=CACHE_TTL, show_spinner="정산 데이터를 불러오는 중…")
 def load_finances(days: int) -> pd.DataFrame:
     return repository.get_finances(settings, days)
 
@@ -43,6 +49,7 @@ days = st.sidebar.slider("조회 기간 (일)", 7, 90, 30, step=1)
 if st.sidebar.button("🔄 새로고침"):
     st.cache_data.clear()
     st.rerun()
+st.sidebar.caption(f"⏱️ 데이터는 {CACHE_TTL // 60}분간 캐시됩니다 (그 안엔 새로고침 버튼으로만 갱신).")
 
 if settings.data_source == "live" and not settings.has_sp_api_credentials:
     st.sidebar.warning("live 모드인데 SP-API 자격증명이 없어 mock 으로 표시 중입니다. `.env` 를 확인하세요.")
