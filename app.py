@@ -48,9 +48,29 @@ if settings.data_source == "live" and not settings.has_sp_api_credentials:
     st.sidebar.warning("live 모드인데 SP-API 자격증명이 없어 mock 으로 표시 중입니다. `.env` 를 확인하세요.")
 
 # ── 데이터 로드 ──────────────────────────────────────────
-orders = load_orders(days)
-inventory = load_inventory()
-finances = load_finances(days)
+def _safe_load(loader, label, *args):
+    """SP-API 호출 실패 시 앱이 죽지 않고 원인 힌트를 보여준다."""
+    try:
+        return loader(*args)
+    except Exception as e:  # noqa: BLE001
+        name = type(e).__name__
+        st.error(f"❌ **{label}** 데이터를 불러오지 못했습니다 — `{name}`")
+        if "Authorization" in name or "auth" in name.lower():
+            st.warning(
+                "**LWA 인증 실패**입니다. SP-API 자격증명을 확인하세요:\n"
+                "- `SP_API_LWA_APP_ID` (Client ID) 가 정확한가\n"
+                "- `SP_API_LWA_CLIENT_SECRET` 가 정확한가 (App ID 가 아니라 Secret)\n"
+                "- `SP_API_REFRESH_TOKEN` 이 **이 앱에서** 발급한 값이고 잘리지 않았는가\n"
+                "- 세 값 모두 앞뒤 공백/따옴표가 없는가"
+            )
+        with st.expander("자세한 오류 메시지"):
+            st.code(str(e) or "(빈 메시지)")
+        st.stop()
+
+
+orders = _safe_load(load_orders, "주문/매출", days)
+inventory = _safe_load(load_inventory, "재고")
+finances = _safe_load(load_finances, "정산", days)
 
 orders = orders[orders["purchase_date"] >= (pd.Timestamp.now() - pd.Timedelta(days=days))]
 shipped = orders[orders["order_status"] == "Shipped"]
