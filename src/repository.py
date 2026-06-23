@@ -42,3 +42,11 @@ def get_finances(settings: Settings | None = None, days: int = 90) -> pd.DataFra
     if source is mock:
         return mock.finances(days)
     return source.finances(settings, days)
+
+
+def get_finance_breakdown(settings: Settings | None = None, days: int = 90) -> pd.DataFrame:
+    settings = settings or load_settings()
+    source = _live_or_mock(settings)
+    if source is mock:
+        return mock.finance_breakdown(days)
+    return source.finance_breakdown(settings, days)

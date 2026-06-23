@@ -435,4 +435,80 @@ def finances(settings: Settings, days: int = 90) -> pd.DataFrame:
 
 
 def _amount(charge: dict) -> float:
-    return float((charge.get("ChargeAmount") or charge.get("FeeAmount") or {}).get("CurrencyAmount", 0) or 0)
+    amt = (
+        charge.get("ChargeAmount")
+        or charge.get("FeeAmount")
+        or charge.get("PromotionAmount")
+        or charge.get("TaxAmount")
+        or charge.get("Amount")
+        or {}
+    )
+    return float(amt.get("CurrencyAmount", 0) or 0)
+
+
+def finance_breakdown(settings: Settings, days: int = 90) -> pd.DataFrame:
+    """정산 이벤트를 '구분/항목'별 금액으로 모두 분해한다.
+
+    수입(매출 구성)은 +, 아마존이 가져가는 수수료/프로모션/환불 등은 −(원본 부호 유지).
+    어디에 얼마가 들고 났는지 한눈에 보기 위한 상세 내역.
+    """
+    from sp_api.api import Finances
+
+    client = Finances(credentials=_credentials(settings), marketplace=_marketplace(settings))
+    posted_after = _iso(datetime.now(timezone.utc) - timedelta(days=days))
+
+    agg: dict[tuple[str, str], float] = {}
+
+    def add(group: str, name: str, amount: float):
+        if not amount:
+            return
+        key = (group, name or "기타")
+        agg[key] = agg.get(key, 0.0) + amount
+
+    next_token: str | None = None
+    while True:
+        if next_token:
+            resp = _retry(lambda: client.list_financial_events(NextToken=next_token))
+        else:
+            resp = _retry(lambda: client.list_financial_events(PostedAfter=posted_after))
+        ev = (resp.payload or {}).get("FinancialEvents", {})
+
+        # 출고(판매) 이벤트
+        for e in ev.get("ShipmentEventList", []):
+            for it in e.get("ShipmentItemList", []):
+                for c in it.get("ItemChargeList", []):
+                    add("매출", c.get("ChargeType", "Charge"), _amount(c))
+                for f in it.get("ItemFeeList", []):
+                    add("수수료", f.get("FeeType", "Fee"), _amount(f))
+                for p in it.get("PromotionList", []):
+                    add("프로모션", p.get("PromotionType", "Promotion"), _amount(p))
+
+        # 환불 이벤트
+        for e in ev.get("RefundEventList", []):
+            for it in e.get("ShipmentItemAdjustmentList", []):
+                for c in it.get("ItemChargeAdjustmentList", []):
+                    add("환불", c.get("ChargeType", "Refund"), _amount(c))
+                for f in it.get("ItemFeeAdjustmentList", []):
+                    add("환불 수수료", f.get("FeeType", "Fee"), _amount(f))
+                for p in it.get("PromotionAdjustmentList", []):
+                    add("환불 프로모션", p.get("PromotionType", "Promotion"), _amount(p))
+
+        # 서비스 수수료(보관료, 광고비 등)
+        for e in ev.get("ServiceFeeEventList", []):
+            for f in e.get("FeeList", []):
+                add("서비스 수수료", f.get("FeeType", "Fee"), _amount(f))
+
+        # 조정(Adjustment)
+        for e in ev.get("AdjustmentEventList", []):
+            atype = e.get("AdjustmentType", "Adjustment")
+            add("조정", atype, _amount({"Amount": e.get("AdjustmentAmount")}))
+
+        next_token = (resp.payload or {}).get("NextToken")
+        if not next_token:
+            break
+
+    rows = [
+        {"구분": g, "항목": n, "금액": round(v, 2)}
+        for (g, n), v in sorted(agg.items())
+    ]
+    return pd.DataFrame(rows, columns=["구분", "항목", "금액"])

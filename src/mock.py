@@ -120,3 +120,25 @@ def finances(days: int = 90) -> pd.DataFrame:
     ).round(2)
     daily["date"] = pd.to_datetime(daily["date"])
     return daily
+
+
+def finance_breakdown(days: int = 90) -> pd.DataFrame:
+    """정산 상세 내역(샘플). 수입 +, 차감 −."""
+    fin = finances(days)
+    revenue = float(fin["revenue"].sum())
+    referral = float(fin["referral_fee"].sum())
+    fba = float(fin["fba_fee"].sum())
+
+    rows = [
+        ("매출", "Principal", round(revenue, 2)),
+        ("매출", "Shipping", round(revenue * 0.04, 2)),
+        ("매출", "Tax", round(revenue * 0.11, 2)),
+        ("수수료", "Commission(판매수수료)", -round(referral, 2)),
+        ("수수료", "FBAPerUnitFulfillmentFee", -round(fba, 2)),
+        ("수수료", "FixedClosingFee", -round(revenue * 0.01, 2)),
+        ("프로모션", "Promotion(할인)", -round(revenue * 0.03, 2)),
+        ("환불", "RefundedPrincipal", -round(revenue * 0.02, 2)),
+        ("서비스 수수료", "FBAStorageFee(보관료)", -round(12.50, 2)),
+        ("서비스 수수료", "Subscription(월구독료)", -39.99),
+    ]
+    return pd.DataFrame(rows, columns=["구분", "항목", "금액"])

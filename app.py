@@ -40,6 +40,11 @@ def load_finances(days: int) -> pd.DataFrame:
     return repository.get_finances(settings, days)
 
 
+@st.cache_data(ttl=CACHE_TTL, show_spinner="정산 상세 내역을 불러오는 중…")
+def load_finance_breakdown(days: int) -> pd.DataFrame:
+    return repository.get_finance_breakdown(settings, days)
+
+
 def short_name(name, n: int = 40) -> str:
     """긴 상품명을 줄인다 (차트 축 라벨/표 셀 공통)."""
     s = str(name)
@@ -288,5 +293,42 @@ with tab_finance:
 
         st.subheader("일별 정산 상세")
         st.dataframe(fin.sort_values("date", ascending=False), use_container_width=True, hide_index=True)
+
+        # ── 상세 정산 내역: 얼마가 어디에 나갔는지 ──────────────
+        st.divider()
+        st.subheader("💸 상세 정산 내역 (얼마가 어디에)")
+        breakdown = load_finance_breakdown(days)
+        if breakdown.empty:
+            st.info("상세 정산 항목이 없습니다.")
+        else:
+            income = breakdown[breakdown["금액"] > 0]["금액"].sum()
+            deductions = breakdown[breakdown["금액"] < 0]["금액"].sum()
+            net = breakdown["금액"].sum()
+            m1, m2, m3 = st.columns(3)
+            m1.metric("총 수입", f"${income:,.2f}")
+            m2.metric("총 차감", f"-${abs(deductions):,.2f}")
+            m3.metric("순 정산액", f"${net:,.2f}")
+
+            bd = breakdown.sort_values("금액")
+            figb = px.bar(
+                bd, x="금액", y="항목", color="구분", orientation="h",
+                title="항목별 금액 (수입 +, 차감 −)", labels={"금액": "금액 ($)"},
+            )
+            st.plotly_chart(figb, use_container_width=True)
+
+            colg, cold = st.columns([1, 2])
+            with colg:
+                st.caption("구분별 합계")
+                grp = (
+                    breakdown.groupby("구분")["금액"].sum().round(2)
+                    .reset_index().sort_values("금액")
+                )
+                st.dataframe(grp, use_container_width=True, hide_index=True)
+            with cold:
+                st.caption("전체 항목 상세")
+                st.dataframe(
+                    breakdown.sort_values(["구분", "금액"]),
+                    use_container_width=True, hide_index=True,
+                )
 
 st.caption("ℹ️ Mock 모드에서는 샘플 데이터가 표시됩니다. 실제 데이터는 `.env` 에 SP-API 자격증명을 넣고 `DATA_SOURCE=live` 로 설정하세요.")
