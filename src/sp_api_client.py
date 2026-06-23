@@ -41,29 +41,22 @@ def _marketplace(settings: Settings):
 _ALL_ORDERS_REPORT = "GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL"
 
 
-def orders(settings: Settings, days: int = 90) -> pd.DataFrame:
-    """Reports API 로 전체 주문 데이터를 한 번에 받아 DataFrame 으로 반환한다.
-
-    개별 getOrders/getOrderItems 호출은 한도가 매우 낮아 데이터가 많으면
-    바로 throttling 된다. 대신 'All Orders' 플랫파일 리포트를 생성·다운로드한다.
-    """
+def _fetch_report_text(settings: Settings, report_type: str, **create_kwargs) -> str:
+    """리포트를 생성→완료까지 폴링→문서 다운로드하여 본문 텍스트를 반환한다."""
     from sp_api.api import Reports
 
     mp = _marketplace(settings)
     client = Reports(credentials=_credentials(settings), marketplace=mp)
-    start = _iso(datetime.now(timezone.utc) - timedelta(days=days))
 
-    # 1) 리포트 생성 요청
     created = _retry(
         lambda: client.create_report(
-            reportType=_ALL_ORDERS_REPORT,
-            dataStartTime=start,
+            reportType=report_type,
             marketplaceIds=[mp.marketplace_id],
+            **create_kwargs,
         )
     )
     report_id = created.payload["reportId"]
 
-    # 2) 처리 완료까지 폴링 (보통 수십 초)
     document_id = None
     for _ in range(60):  # 최대 ~5분
         report = _retry(lambda: client.get_report(report_id))
@@ -78,9 +71,18 @@ def orders(settings: Settings, days: int = 90) -> pd.DataFrame:
     if not document_id:
         raise TimeoutError("리포트 처리 시간이 초과되었습니다. 잠시 후 다시 시도하세요.")
 
-    # 3) 리포트 문서 다운로드 → TSV 파싱
     doc = _retry(lambda: client.get_report_document(document_id))
-    text = _download_report_text(doc.payload)
+    return _download_report_text(doc.payload)
+
+
+def orders(settings: Settings, days: int = 90) -> pd.DataFrame:
+    """Reports API 로 전체 주문 데이터를 한 번에 받아 DataFrame 으로 반환한다.
+
+    개별 getOrders/getOrderItems 호출은 한도가 매우 낮아 데이터가 많으면
+    바로 throttling 된다. 대신 'All Orders' 플랫파일 리포트를 생성·다운로드한다.
+    """
+    start = _iso(datetime.now(timezone.utc) - timedelta(days=days))
+    text = _fetch_report_text(settings, _ALL_ORDERS_REPORT, dataStartTime=start)
     return _parse_all_orders(text)
 
 
@@ -168,43 +170,66 @@ def _retry(call, attempts: int = 4, base_delay: float = 3.0):
     raise last
 
 
-def inventory(settings: Settings) -> pd.DataFrame:
-    from sp_api.api import Inventories
+# FBA 재고 스냅샷 리포트 (실시간 FBA Inventory API 대신 사용 — 호출/권한이 더 관대)
+_FBA_INVENTORY_REPORT = "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA"
 
-    client = Inventories(credentials=_credentials(settings), marketplace=_marketplace(settings))
-    rows: list[dict] = []
-    next_token: str | None = None
-    while True:
-        kwargs = {"details": True, "marketplaceIds": [_marketplace(settings).marketplace_id]}
-        if next_token:
-            kwargs["nextToken"] = next_token
-        resp = _retry(lambda: client.get_inventory_summary_marketplace(**kwargs))
-        payload = resp.payload or {}
-        for s in payload.get("inventorySummaries", []):
-            details = s.get("inventoryDetails", {}) or {}
-            fulfillable = int(details.get("fulfillableQuantity", 0) or 0)
-            inbound = int(
-                (details.get("inboundWorkingQuantity", 0) or 0)
-                + (details.get("inboundShippedQuantity", 0) or 0)
-            )
-            reserved = int(
-                (details.get("reservedQuantity", {}) or {}).get("totalReservedQuantity", 0) or 0
-            )
-            rows.append(
-                {
-                    "sku": s.get("sellerSku"),
-                    "asin": s.get("asin"),
-                    "product_name": s.get("productName"),
-                    "fulfillable_quantity": fulfillable,
-                    "inbound_quantity": inbound,
-                    "reserved_quantity": reserved,
-                    "total_quantity": fulfillable + inbound + reserved,
-                }
-            )
-        next_token = (resp.pagination or {}).get("nextToken") if hasattr(resp, "pagination") else None
-        if not next_token:
-            break
-    return pd.DataFrame(rows)
+
+def inventory(settings: Settings) -> pd.DataFrame:
+    """FBA 재고를 리포트로 받아 DataFrame 으로 반환한다.
+
+    실시간 FBA Inventory API(getInventorySummaries)는 권한/엔드포인트 제약이
+    까다로워 403 이 잦다. 동일 데이터를 제공하는 재고 리포트를 사용한다.
+    """
+    text = _fetch_report_text(settings, _FBA_INVENTORY_REPORT)
+    return _parse_fba_inventory(text)
+
+
+def _parse_fba_inventory(text: str) -> pd.DataFrame:
+    cols = [
+        "sku", "asin", "product_name", "fulfillable_quantity",
+        "inbound_quantity", "reserved_quantity", "total_quantity",
+    ]
+    if not text.strip():
+        return pd.DataFrame(columns=cols)
+
+    df = pd.read_csv(io.StringIO(text), sep="\t", dtype=str)
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+
+    def num(*names: str):
+        for n in names:
+            if n in df.columns:
+                return pd.to_numeric(df[n], errors="coerce").fillna(0).astype(int)
+        return pd.Series([0] * len(df), dtype=int)
+
+    def col(*names: str):
+        for n in names:
+            if n in df.columns:
+                return df[n]
+        return pd.Series([None] * len(df))
+
+    fulfillable = num("afn-fulfillable-quantity")
+    inbound = (
+        num("afn-inbound-working-quantity")
+        + num("afn-inbound-shipped-quantity")
+        + num("afn-inbound-receiving-quantity")
+    )
+    reserved = num("afn-reserved-quantity")
+    total = num("afn-total-quantity")
+    # 리포트에 total 이 비어 있으면 합산으로 보정
+    total = total.where(total > 0, fulfillable + inbound + reserved)
+
+    return pd.DataFrame(
+        {
+            "sku": col("sku", "seller-sku"),
+            "asin": col("asin"),
+            "product_name": col("product-name"),
+            "fulfillable_quantity": fulfillable,
+            "inbound_quantity": inbound,
+            "reserved_quantity": reserved,
+            "total_quantity": total,
+        }
+    )
 
 
 def finances(settings: Settings, days: int = 90) -> pd.DataFrame:
