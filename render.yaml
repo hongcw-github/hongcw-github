@@ -1,0 +1,27 @@
+# Render 배포용 Blueprint (백엔드: FastAPI)
+# Render 에서 New > Blueprint 로 이 레포를 선택하면 자동 설정됩니다.
+# (또는 New > Web Service 로 수동 설정해도 동일)
+services:
+  - type: web
+    name: amazon-seller-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r api/requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # 실데이터 전환 시 DATA_SOURCE=live 로 바꾸고 아래 자격증명을 채우세요.
+      - key: DATA_SOURCE
+        value: mock
+      - key: SP_API_MARKETPLACE
+        value: CA
+      - key: CORS_ORIGINS
+        value: "*"
+      # 아래 4개는 Render 대시보드에서 직접 입력 (값은 레포에 넣지 않음)
+      - key: SP_API_LWA_APP_ID
+        sync: false
+      - key: SP_API_LWA_CLIENT_SECRET
+        sync: false
+      - key: SP_API_REFRESH_TOKEN
+        sync: false
