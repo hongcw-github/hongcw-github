@@ -108,8 +108,9 @@ export default function Page() {
       )}
 
       <footer className="mt-10 text-center text-xs text-slate-400">
-        Mock 모드는 샘플 데이터입니다. 실제 데이터는 백엔드 환경변수에 SP-API 자격증명을 넣고
-        DATA_SOURCE=live 로 설정하세요.
+        {data?.mode === "mock"
+          ? "Mock 모드는 샘플 데이터입니다. 실제 데이터는 백엔드 환경변수에 SP-API 자격증명을 넣고 DATA_SOURCE=live 로 설정하세요."
+          : "실시간 데이터는 캐시(30분) 후 표시됩니다. 최신값은 새로고침을 누르세요."}
       </footer>
     </div>
   );
