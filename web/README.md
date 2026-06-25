@@ -1,5 +1,7 @@
 # Amazon 셀러 대시보드 — 웹앱 (Next.js + FastAPI)
 
+> 배포: Vercel(프론트, Root Directory=`web`) + Render(백엔드).
+
 세련된 React 대시보드. 화면은 Next.js, 데이터는 기존 Python 계층을 재사용한
 FastAPI 백엔드가 제공합니다.
 
