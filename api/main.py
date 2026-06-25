@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 from fastapi import FastAPI, Query
@@ -46,6 +48,11 @@ def _section(loader):
         return None, {"type": type(e).__name__, "message": str(e)[:500]}
 
 
+# ── 간단한 인메모리 캐시 (무거운 리포트 생성을 매 요청마다 반복하지 않도록) ──
+_CACHE_TTL = int(os.getenv("CACHE_TTL_MINUTES", "30")) * 60
+_cache: dict[int, tuple[float, dict]] = {}
+
+
 @app.get("/api/health")
 def health():
     s = load_settings()
@@ -53,13 +60,30 @@ def health():
 
 
 @app.get("/api/dashboard")
-def dashboard(days: int = Query(30, ge=1, le=365)):
+def dashboard(days: int = Query(30, ge=1, le=365), refresh: bool = False):
+    # 캐시 히트 시 즉시 반환
+    hit = _cache.get(days)
+    if hit and not refresh and (time.time() - hit[0] < _CACHE_TTL):
+        return {**hit[1], "cached": True}
+
+    payload = _build_dashboard(days)
+    _cache[days] = (time.time(), payload)
+    return payload
+
+
+def _build_dashboard(days: int):
     settings = load_settings()
 
-    orders, orders_err = _section(lambda: repository.get_orders(settings, days))
-    inventory, inv_err = _section(lambda: repository.get_inventory(settings))
-    finances, fin_err = _section(lambda: repository.get_finances(settings, days))
-    breakdown, bd_err = _section(lambda: repository.get_finance_breakdown(settings, days))
+    # 4개 섹션을 병렬로 받아 총 소요시간을 합산이 아닌 최댓값 수준으로 단축
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        f_orders = ex.submit(_section, lambda: repository.get_orders(settings, days))
+        f_inv = ex.submit(_section, lambda: repository.get_inventory(settings))
+        f_fin = ex.submit(_section, lambda: repository.get_finances(settings, days))
+        f_bd = ex.submit(_section, lambda: repository.get_finance_breakdown(settings, days))
+        orders, orders_err = f_orders.result()
+        inventory, inv_err = f_inv.result()
+        finances, fin_err = f_fin.result()
+        breakdown, bd_err = f_bd.result()
 
     if orders is None:
         orders = pd.DataFrame(

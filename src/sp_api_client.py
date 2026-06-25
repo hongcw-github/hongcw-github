@@ -306,11 +306,11 @@ def inventory(settings: Settings) -> pd.DataFrame:
     더 단순하고 안정적인 AFN 재고 리포트로 폴백한다.
     """
     try:
-        text = _fetch_report_text(settings, _FBA_INVENTORY_REPORT)
+        # FATAL 재시도 없이 한 번만 시도 → 실패하면 즉시 단순 리포트로 폴백(지연 최소화)
+        text = _fetch_report_text(settings, _FBA_INVENTORY_REPORT, fatal_retries=0)
         return _parse_fba_inventory(text)
     except (RuntimeError, TimeoutError):
-        # 상세 리포트가 FATAL/타임아웃이면 단순 AFN 리포트로 폴백
-        text = _fetch_report_text(settings, _AFN_INVENTORY_REPORT)
+        text = _fetch_report_text(settings, _AFN_INVENTORY_REPORT, fatal_retries=0)
         return _parse_fba_inventory(text)
 
 
