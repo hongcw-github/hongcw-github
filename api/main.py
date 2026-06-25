@@ -63,25 +63,32 @@ def health():
 def dashboard(days: int = Query(30, ge=1, le=365), refresh: bool = False):
     # 캐시 히트 시 즉시 반환
     hit = _cache.get(days)
-    if hit and not refresh and (time.time() - hit[0] < _CACHE_TTL):
+    if hit and not refresh and (time.time() - hit[0] < hit[2]):
         return {**hit[1], "cached": True}
 
     payload = _build_dashboard(days)
-    _cache[days] = (time.time(), payload)
+    # 에러가 섞인(특히 일시적 throttle) 결과는 짧게만 캐시해 곧 다시 시도되게 한다
+    has_err = any(payload[s].get("error") for s in ("sales", "inventory", "finance"))
+    ttl = 120 if has_err else _CACHE_TTL
+    _cache[days] = (time.time(), payload, ttl)
     return payload
 
 
 def _build_dashboard(days: int):
     settings = load_settings()
 
-    # 4개 섹션을 병렬로 받아 총 소요시간을 합산이 아닌 최댓값 수준으로 단축
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        f_orders = ex.submit(_section, lambda: repository.get_orders(settings, days))
-        f_inv = ex.submit(_section, lambda: repository.get_inventory(settings))
+    # 리포트(createReport) 기반인 orders·inventory 는 동시에 부르면 한도에 걸리므로
+    # 한 스레드에서 순차 실행하고, 정산 계열만 병렬로 받는다.
+    def _orders_then_inventory():
+        o = _section(lambda: repository.get_orders(settings, days))
+        i = _section(lambda: repository.get_inventory(settings))
+        return o, i
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_si = ex.submit(_orders_then_inventory)
         f_fin = ex.submit(_section, lambda: repository.get_finances(settings, days))
         f_bd = ex.submit(_section, lambda: repository.get_finance_breakdown(settings, days))
-        orders, orders_err = f_orders.result()
-        inventory, inv_err = f_inv.result()
+        (orders, orders_err), (inventory, inv_err) = f_si.result()
         finances, fin_err = f_fin.result()
         breakdown, bd_err = f_bd.result()
 

@@ -2,10 +2,9 @@ import type { DashboardData } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-export async function fetchDashboard(days: number): Promise<DashboardData> {
-  const res = await fetch(`${BASE}/api/dashboard?days=${days}`, {
-    cache: "no-store",
-  });
+export async function fetchDashboard(days: number, refresh = false): Promise<DashboardData> {
+  const url = `${BASE}/api/dashboard?days=${days}${refresh ? "&refresh=1" : ""}`;
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`API ${res.status}`);
   }

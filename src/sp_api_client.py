@@ -277,7 +277,7 @@ def _empty_orders() -> pd.DataFrame:
     )
 
 
-def _retry(call, attempts: int = 4, base_delay: float = 3.0):
+def _retry(call, attempts: int = 5, base_delay: float = 3.0):
     """SP-API throttling(QuotaExceeded) 발생 시 지수 백오프로 재시도."""
     last = None
     for i in range(attempts):
@@ -286,7 +286,7 @@ def _retry(call, attempts: int = 4, base_delay: float = 3.0):
         except Exception as e:  # noqa: BLE001
             last = e
             if "Throttled" in type(e).__name__ or "QuotaExceeded" in str(e):
-                time.sleep(base_delay * (2**i))
+                time.sleep(min(base_delay * (2**i), 30))
                 continue
             raise
     raise last
