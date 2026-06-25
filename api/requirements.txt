@@ -1,0 +1,7 @@
+# 백엔드(FastAPI) 의존성. 데이터 계층(src/)은 루트 requirements.txt 도 사용.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pandas>=2.2
+python-dotenv>=1.0
+python-amazon-sp-api>=1.9
+requests>=2.31

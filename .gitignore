@@ -22,3 +22,10 @@ data/*.csv
 .DS_Store
 .idea/
 .vscode/
+
+# Node / Next.js (web/)
+node_modules/
+web/.next/
+web/out/
+web/.env.local
+next-env.d.ts
