@@ -44,3 +44,5 @@ npm run dev
 - 탭: 주문/매출 · 재고 · 정산/수익
 - 섹션별 graceful 에러 (한 API 가 막혀도 나머지는 표시)
 - 기간 선택(7~90일) · 새로고침
+
+<!-- redeploy: wire NEXT_PUBLIC_API_URL -->
