@@ -26,15 +26,37 @@ const GROUP_COLOR: Record<string, string> = {
   조정: "#64748b",
 };
 
-export default function FinanceTab({ finance }: { finance: DashboardData["finance"] }) {
+export default function FinanceTab({
+  finance,
+  profit,
+}: {
+  finance: DashboardData["finance"];
+  profit: DashboardData["profit"];
+}) {
   if (finance.error) return <ErrorBanner label="정산" error={finance.error} />;
   if (finance.daily.length === 0 && finance.breakdown.length === 0)
     return <Card>정산 데이터가 없습니다.</Card>;
 
   const bd = [...finance.breakdown].sort((a, b) => a.amount - b.amount);
+  const margin = profit.amazon_net ? (profit.true_profit / profit.amazon_net) * 100 : 0;
 
   return (
     <div className="grid grid-cols-1 gap-5">
+      {/* 진짜 순이익 */}
+      <Card title="🏆 진짜 순이익 (상품원가 반영)">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <Metric label="아마존 정산순액" value={fmtUSD(profit.amazon_net)} />
+          <Metric label="상품원가(COGS)" value={`- ${fmtUSD(profit.cogs)}`} />
+          <Metric label="진짜 순이익" value={fmtUSD(profit.true_profit)} accent />
+          <Metric label="순이익률" value={`${margin.toFixed(1)}%`} />
+        </div>
+        <p className="mt-3 text-xs text-slate-400">
+          아마존 정산순액 = 매출에서 모든 수수료·환불·보관료를 뺀 실수령액. 여기서 상품원가까지 빼면 진짜 순이익입니다.
+          {profit.cogs === 0 && " ⚠️ 원가가 입력되지 않아 COGS=0 입니다 — costs.json 에 SKU별 원가를 넣으면 정확해집니다."}
+          {" "}아직 제외: {profit.excludes.join(", ")}.
+        </p>
+      </Card>
+
       <Card title="매출 vs 순수익 추이">
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={finance.daily} margin={{ left: 8, right: 8 }}>

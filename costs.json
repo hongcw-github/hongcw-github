@@ -1,0 +1,16 @@
+{
+  "_comment": "SKU별 1개당 매입 원가(USD). 아는 값만 채우세요. 없는 SKU는 원가 0으로 계산됩니다. (_로 시작하는 키는 무시)",
+  "_how": "예: \"내SKU\": 4.20  — 진짜 순이익 = 아마존 정산순액 - (이 원가 x 판매수량)",
+
+  "FMProject2NiacinamideArbutin": 0,
+  "FMProject4PeptideRetinol": 0,
+
+  "TS-BLK-M": 8.5,
+  "TS-WHT-L": 8.5,
+  "MUG-300": 4.2,
+  "BTL-750": 11.0,
+  "CAP-NVY": 6.3,
+  "SOCK-3P": 3.1,
+  "NB-A5": 2.4,
+  "PEN-BLU": 1.8
+}

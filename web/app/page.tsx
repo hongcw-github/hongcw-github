@@ -137,7 +137,7 @@ export default function Page() {
         <>
           {tab === "sales" && <SalesTab sales={data.sales} />}
           {tab === "inventory" && <InventoryTab inventory={data.inventory} />}
-          {tab === "finance" && <FinanceTab finance={data.finance} />}
+          {tab === "finance" && <FinanceTab finance={data.finance} profit={data.profit} />}
         </>
       )}
 

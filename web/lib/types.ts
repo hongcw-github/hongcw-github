@@ -45,4 +45,12 @@ export interface DashboardData {
     totals: { income: number; deductions: number; net: number };
     error: ApiError | null;
   };
+  profit: {
+    amazon_net: number;
+    cogs: number;
+    true_profit: number;
+    cogs_known: number;
+    units: number;
+    excludes: string[];
+  };
 }

@@ -18,6 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src import repository  # noqa: E402
 from src.config import load_settings  # noqa: E402
+from src.costs import load_costs  # noqa: E402
 
 app = FastAPI(title="Amazon Seller Dashboard API")
 
@@ -130,8 +131,25 @@ def _build_dashboard(days: int):
     revenue = float(shipped["item_price"].sum()) if not shipped.empty else 0.0
     units = int(shipped["quantity"].sum()) if not shipped.empty else 0
     order_count = int(shipped["amazon_order_id"].nunique()) if not shipped.empty else 0
-    net_profit = float(finances["net_profit"].sum()) if finances is not None and not finances.empty else 0.0
     aov = revenue / order_count if order_count else 0.0
+
+    # ── 진짜 순이익 = 아마존 정산순액(모든 수수료·환불·보관료 반영) − 상품원가(COGS) ──
+    costs = load_costs()
+    cogs = 0.0
+    if not shipped.empty:
+        cogs = float(
+            sum(costs.get(r.sku, 0.0) * int(r.quantity or 0) for r in shipped.itertuples())
+        )
+    # 아마존 정산순액: 상세내역(breakdown)의 net 우선, 없으면 일별 정산 합
+    if breakdown is not None and not breakdown.empty:
+        amazon_net = round(float(breakdown["금액"].sum()), 2)
+    elif finances is not None and not finances.empty:
+        amazon_net = round(float(finances["net_profit"].sum()), 2)
+    else:
+        amazon_net = 0.0
+    true_profit = round(amazon_net - cogs, 2)
+    cogs_known = sum(1 for r in shipped.itertuples() if costs.get(r.sku)) if not shipped.empty else 0
+    net_profit = true_profit
 
     # ── 매출(주문) 집계 ──
     daily_sales, by_sku, status = [], [], []
@@ -204,5 +222,13 @@ def _build_dashboard(days: int):
             "breakdown": fin_breakdown,
             "totals": fin_totals,
             "error": fin_err or bd_err,
+        },
+        "profit": {
+            "amazon_net": amazon_net,   # 아마존이 정산해주는 순액(수수료·환불·보관료 반영)
+            "cogs": round(cogs, 2),     # 상품 매입원가 (costs.json)
+            "true_profit": true_profit, # 진짜 순이익 = amazon_net - cogs
+            "cogs_known": cogs_known,   # 원가가 입력된 판매건 수
+            "units": units,
+            "excludes": ["광고비(Ads)", "인바운드 배송", "관세/포장", "remittance 세금"],
         },
     }
