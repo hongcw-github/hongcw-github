@@ -50,3 +50,13 @@ def get_finance_breakdown(settings: Settings | None = None, days: int = 90) -> p
     if source is mock:
         return mock.finance_breakdown(days)
     return source.finance_breakdown(settings, days)
+
+
+def get_ads(settings: Settings | None = None, days: int = 90) -> dict:
+    """광고는 별도 자격증명(ADS_*)이 있을 때만 live, 없으면 mock."""
+    settings = settings or load_settings()
+    if settings.has_ads_credentials:
+        from . import ads_client
+
+        return ads_client.ads(settings, days)
+    return mock.ads(days)

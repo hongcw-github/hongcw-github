@@ -53,4 +53,21 @@ export interface DashboardData {
     units: number;
     excludes: string[];
   };
+  ads: {
+    mode: "mock" | "live";
+    summary: {
+      spend: number;
+      ad_sales: number;
+      impressions: number;
+      clicks: number;
+      orders: number;
+      acos: number;
+      roas: number;
+      ctr: number;
+      cpc: number;
+    };
+    daily: { date: string; spend: number; ad_sales: number }[];
+    by_name: { name: string; spend: number; ad_sales: number; acos: number }[];
+    error: ApiError | null;
+  };
 }

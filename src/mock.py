@@ -142,3 +142,48 @@ def finance_breakdown(days: int = 90) -> pd.DataFrame:
         ("서비스 수수료", "Subscription(월구독료)", -39.99),
     ]
     return pd.DataFrame(rows, columns=["구분", "항목", "금액"])
+
+
+def ads(days: int = 90) -> dict:
+    """광고(Amazon Ads) 샘플 데이터. 일별 지출/광고매출 + SKU별 + 요약."""
+    rng = _rng()
+    od = orders(days)
+    shipped = od[od["order_status"] == "Shipped"].copy()
+
+    # 일별: 광고비 ≈ 매출의 12%, 광고매출 ≈ 광고비의 4배(ACOS ~25%)
+    daily = (
+        shipped.groupby(shipped["purchase_date"].dt.date)["item_price"].sum().reset_index()
+    )
+    daily.columns = ["date", "revenue"]
+    daily["spend"] = (daily["revenue"] * 0.12 * [0.8 + rng.random() * 0.4 for _ in range(len(daily))]).round(2)
+    daily["ad_sales"] = (daily["spend"] * (3 + rng.random() * 2)).round(2)
+    daily["date"] = pd.to_datetime(daily["date"])
+    daily = daily[["date", "spend", "ad_sales"]]
+
+    # SKU별
+    by_sku = shipped.groupby("sku").agg(revenue=("item_price", "sum")).reset_index()
+    by_sku["spend"] = (by_sku["revenue"] * 0.12 * [0.7 + rng.random() * 0.6 for _ in range(len(by_sku))]).round(2)
+    by_sku["ad_sales"] = (by_sku["spend"] * (2.5 + rng.random() * 2.5)).round(2)
+    by_sku["acos"] = (by_sku["spend"] / by_sku["ad_sales"].replace(0, pd.NA) * 100).round(1).fillna(0)
+    by_sku = (
+        by_sku.rename(columns={"sku": "name"})[["name", "spend", "ad_sales", "acos"]]
+        .sort_values("spend", ascending=False)
+    )
+
+    spend = float(daily["spend"].sum())
+    ad_sales = float(daily["ad_sales"].sum())
+    impressions = int(spend * rng.randint(800, 1200))
+    clicks = int(spend / (0.4 + rng.random() * 0.4))
+    ad_orders = int(ad_sales / 30)
+    summary = {
+        "spend": round(spend, 2),
+        "ad_sales": round(ad_sales, 2),
+        "impressions": impressions,
+        "clicks": clicks,
+        "orders": ad_orders,
+        "acos": round(spend / ad_sales * 100, 1) if ad_sales else 0,
+        "roas": round(ad_sales / spend, 2) if spend else 0,
+        "ctr": round(clicks / impressions * 100, 2) if impressions else 0,
+        "cpc": round(spend / clicks, 2) if clicks else 0,
+    }
+    return {"summary": summary, "daily": daily, "by_sku": by_sku}

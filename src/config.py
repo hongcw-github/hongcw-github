@@ -40,6 +40,13 @@ class Settings:
             return True
         return not self.has_sp_api_credentials
 
+    @property
+    def has_ads_credentials(self) -> bool:
+        return all([
+            self.ads_client_id, self.ads_client_secret,
+            self.ads_refresh_token, self.ads_profile_id,
+        ])
+
 
 def _secret(name: str) -> str | None:
     """Streamlit Cloud 에 배포했을 때 st.secrets 에서 값을 읽는다.

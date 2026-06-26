@@ -105,13 +105,15 @@ def _build_dashboard(days: int):
         i = _section(lambda: repository.get_inventory(settings))
         return o, i
 
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         f_si = ex.submit(_orders_then_inventory)
         f_fin = ex.submit(_section, lambda: repository.get_finances(settings, days))
         f_bd = ex.submit(_section, lambda: repository.get_finance_breakdown(settings, days))
+        f_ads = ex.submit(_section, lambda: repository.get_ads(settings, days))
         (orders, orders_err), (inventory, inv_err) = f_si.result()
         finances, fin_err = f_fin.result()
         breakdown, bd_err = f_bd.result()
+        ads_data, ads_err = f_ads.result()
 
     if orders is None:
         orders = pd.DataFrame(
@@ -229,6 +231,13 @@ def _build_dashboard(days: int):
             "true_profit": true_profit, # 진짜 순이익 = amazon_net - cogs
             "cogs_known": cogs_known,   # 원가가 입력된 판매건 수
             "units": units,
-            "excludes": ["광고비(Ads)", "인바운드 배송", "관세/포장", "remittance 세금"],
+            "excludes": ["인바운드 배송", "관세/포장", "remittance 세금"],
+        },
+        "ads": {
+            "mode": "live" if settings.has_ads_credentials else "mock",
+            "summary": (ads_data or {}).get("summary", {}),
+            "daily": _records((ads_data or {}).get("daily")) if ads_data else [],
+            "by_name": _records((ads_data or {}).get("by_sku")) if ads_data else [],
+            "error": ads_err,
         },
     }
