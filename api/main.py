@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -53,14 +53,34 @@ _CACHE_TTL = int(os.getenv("CACHE_TTL_MINUTES", "30")) * 60
 _cache: dict[int, tuple[float, dict]] = {}
 
 
+# 대시보드 접근 비밀번호 (설정 시 /api/dashboard 호출에 키 필요; 없으면 공개)
+_DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD")
+
+
 @app.get("/api/health")
 def health():
     s = load_settings()
-    return {"ok": True, "mode": "mock" if s.use_mock else "live", "marketplace": s.marketplace}
+    return {
+        "ok": True,
+        "mode": "mock" if s.use_mock else "live",
+        "marketplace": s.marketplace,
+        "auth_required": bool(_DASHBOARD_PASSWORD),
+    }
 
 
 @app.get("/api/dashboard")
-def dashboard(days: int = Query(30, ge=1, le=365), refresh: bool = False):
+def dashboard(
+    days: int = Query(30, ge=1, le=365),
+    refresh: bool = False,
+    key: str | None = Query(None),
+    x_dashboard_key: str | None = Header(None),
+):
+    # 비밀번호가 설정돼 있으면 헤더(X-Dashboard-Key) 또는 ?key= 로 검증
+    if _DASHBOARD_PASSWORD:
+        provided = x_dashboard_key or key
+        if provided != _DASHBOARD_PASSWORD:
+            raise HTTPException(status_code=401, detail="unauthorized")
+
     # 캐시 히트 시 즉시 반환
     hit = _cache.get(days)
     if hit and not refresh and (time.time() - hit[0] < hit[2]):

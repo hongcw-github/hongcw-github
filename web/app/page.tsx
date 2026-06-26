@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { fetchDashboard, fmtNum, fmtUSD } from "@/lib/api";
+import { fetchDashboard, fmtNum, fmtUSD, setKey, UnauthorizedError } from "@/lib/api";
 import type { DashboardData } from "@/lib/types";
 import { Metric } from "@/components/ui";
 import SalesTab from "@/components/SalesTab";
@@ -18,12 +18,46 @@ const TABS = [
 export default function Page() {
   const [days, setDays] = useState(30);
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("sales");
+  const [pw, setPw] = useState("");
 
   const { data, error, isLoading, mutate } = useSWR<DashboardData>(
     ["dashboard", days],
     () => fetchDashboard(days),
-    { revalidateOnFocus: false }
+    { revalidateOnFocus: false, shouldRetryOnError: false }
   );
+
+  // 비밀번호 게이트: 백엔드가 401 이면 로그인 화면 표시
+  if (error instanceof UnauthorizedError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setKey(pw);
+            mutate();
+          }}
+          className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <h1 className="text-lg font-bold text-brand-dark">🔒 Amazon 셀러 대시보드</h1>
+          <p className="mt-1 text-sm text-slate-500">비밀번호를 입력하세요.</p>
+          <input
+            type="password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            autoFocus
+            className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            placeholder="비밀번호"
+          />
+          <button
+            type="submit"
+            className="mt-3 w-full rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+          >
+            입장
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
