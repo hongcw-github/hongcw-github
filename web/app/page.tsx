@@ -3,6 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { fetchDashboard, fmtNum, fmtUSD, setKey, UnauthorizedError } from "@/lib/api";
+import { loadCosts, saveCosts, type CostMap } from "@/lib/costs";
 import type { DashboardData } from "@/lib/types";
 import { Metric } from "@/components/ui";
 import SalesTab from "@/components/SalesTab";
@@ -19,6 +20,13 @@ export default function Page() {
   const [days, setDays] = useState(30);
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("sales");
   const [pw, setPw] = useState("");
+  const [costs, setCostsState] = useState<CostMap>(() => loadCosts());
+
+  const onCostChange = (sku: string, value: number) => {
+    const next = { ...costs, [sku]: value };
+    setCostsState(next);
+    saveCosts(next);
+  };
 
   const { data, error, isLoading, mutate } = useSWR<DashboardData>(
     ["dashboard", days],
@@ -97,16 +105,21 @@ export default function Page() {
         </div>
       </header>
 
-      {/* KPI */}
-      {data && (
-        <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
-          <Metric label="총 매출" value={fmtUSD(data.kpis.revenue)} />
-          <Metric label="순수익(추정)" value={fmtUSD(data.kpis.net_profit)} accent />
-          <Metric label="판매 수량" value={fmtNum(data.kpis.units)} />
-          <Metric label="주문 수" value={fmtNum(data.kpis.orders)} />
-          <Metric label="객단가(AOV)" value={fmtUSD(data.kpis.aov)} />
-        </div>
-      )}
+      {/* KPI (순이익은 입력한 원가를 반영해 클라이언트에서 계산) */}
+      {data &&
+        (() => {
+          const cogs = data.sales.by_sku.reduce((s, r) => s + (costs[r.sku] || 0) * r.units, 0);
+          const trueProfit = data.profit.amazon_net - cogs;
+          return (
+            <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
+              <Metric label="총 매출" value={fmtUSD(data.kpis.revenue)} />
+              <Metric label="순이익" value={fmtUSD(trueProfit)} accent />
+              <Metric label="판매 수량" value={fmtNum(data.kpis.units)} />
+              <Metric label="주문 수" value={fmtNum(data.kpis.orders)} />
+              <Metric label="객단가(AOV)" value={fmtUSD(data.kpis.aov)} />
+            </div>
+          );
+        })()}
 
       {/* 탭 */}
       <nav className="mb-5 flex gap-1 border-b border-slate-200">
@@ -137,7 +150,15 @@ export default function Page() {
         <>
           {tab === "sales" && <SalesTab sales={data.sales} />}
           {tab === "inventory" && <InventoryTab inventory={data.inventory} />}
-          {tab === "finance" && <FinanceTab finance={data.finance} profit={data.profit} />}
+          {tab === "finance" && (
+            <FinanceTab
+              finance={data.finance}
+              profit={data.profit}
+              bySku={data.sales.by_sku}
+              costs={costs}
+              onCostChange={onCostChange}
+            />
+          )}
         </>
       )}
 
