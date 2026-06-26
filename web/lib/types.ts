@@ -55,6 +55,7 @@ export interface DashboardData {
   };
   ads: {
     mode: "mock" | "live";
+    settlement_spend: number;
     summary: {
       spend: number;
       ad_sales: number;

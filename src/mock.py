@@ -140,6 +140,7 @@ def finance_breakdown(days: int = 90) -> pd.DataFrame:
         ("환불", "RefundedPrincipal", -round(revenue * 0.02, 2)),
         ("서비스 수수료", "FBAStorageFee(보관료)", -round(12.50, 2)),
         ("서비스 수수료", "Subscription(월구독료)", -39.99),
+        ("광고", "Sponsored Products(광고비)", -round(revenue * 0.12, 2)),
     ]
     return pd.DataFrame(rows, columns=["구분", "항목", "금액"])
 

@@ -503,6 +503,11 @@ def finance_breakdown(settings: Settings, days: int = 90) -> pd.DataFrame:
             atype = e.get("AdjustmentType", "Adjustment")
             add("조정", atype, _amount({"Amount": e.get("AdjustmentAmount")}))
 
+        # 광고비(Sponsored Products 등 — 잔액에서 차감되는 경우 여기 잡힘)
+        for e in ev.get("ProductAdsPaymentEventList", []):
+            add("광고", e.get("transactionType", "Sponsored Products"),
+                _amount({"Amount": e.get("transactionValue")}))
+
         next_token = (resp.payload or {}).get("NextToken")
         if not next_token:
             break

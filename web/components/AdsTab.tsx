@@ -26,36 +26,36 @@ export default function AdsTab({
   if (ads.error) return <ErrorBanner label="광고" error={ads.error} />;
 
   const s = ads.summary;
-  const finalProfit = trueProfit - s.spend;
-  const finalMargin = trueProfit ? (finalProfit / trueProfit) * 100 : 0;
+  const realSpend = ads.settlement_spend;
+  const finalMargin = trueProfit && realSpend ? (realSpend / (trueProfit + realSpend)) * 100 : 0;
 
   return (
     <div className="grid grid-cols-1 gap-5">
-      {ads.mode === "mock" && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
-          🟡 광고는 <b>샘플 데이터</b>입니다. 실제 광고비를 보려면 <b>Amazon Ads API</b> 자격증명을 백엔드에 추가하세요.
+      {/* 실제 광고비 (정산 기준) — 순이익에 이미 반영 */}
+      <Card title="🏁 광고비 & 최종 순이익 (정산 기준 실제값)">
+        <div className="grid grid-cols-3 gap-4">
+          <Metric label="실제 광고비 (정산 차감)" value={fmtUSD(realSpend)} />
+          <Metric label="광고 비중 (vs 순이익+광고)" value={`${finalMargin.toFixed(1)}%`} />
+          <Metric label="최종 순이익 (광고 반영됨)" value={fmtUSD(trueProfit)} accent />
         </div>
-      )}
+        <p className="mt-3 text-xs text-slate-400">
+          광고비는 아마존 정산에서 차감되므로, 위 <b>순이익에 이미 포함</b>되어 있습니다 (잔액 차감 방식).
+          {realSpend === 0 && " (이 기간 정산에 광고 차감 내역이 없습니다.)"}
+        </p>
+      </Card>
 
-      {/* 핵심 KPI */}
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
+        🟡 아래 <b>ACOS·ROAS·캠페인별</b> 등 상세 분석은 <b>샘플</b>입니다. Amazon Ads API 를 연동하면 실데이터로 바뀝니다.
+        (위 "실제 광고비"는 정산 기준 진짜 금액)
+      </div>
+
+      {/* 핵심 KPI (샘플 분석) */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <Metric label="광고비" value={fmtUSD(s.spend)} />
-        <Metric label="광고 매출" value={fmtUSD(s.ad_sales)} />
+        <Metric label="광고비(샘플)" value={fmtUSD(s.spend)} />
+        <Metric label="광고 매출(샘플)" value={fmtUSD(s.ad_sales)} />
         <Metric label="ACOS (광고비/광고매출)" value={`${s.acos}%`} />
         <Metric label="ROAS (광고매출/광고비)" value={`${s.roas}x`} />
       </div>
-
-      {/* 광고 후 최종 순이익 */}
-      <Card title="🏁 광고 후 최종 순이익">
-        <div className="grid grid-cols-3 gap-4">
-          <Metric label="순이익(광고 전)" value={fmtUSD(trueProfit)} />
-          <Metric label="광고비" value={`- ${fmtUSD(s.spend)}`} />
-          <Metric label="최종 순이익" value={fmtUSD(finalProfit)} accent />
-        </div>
-        <p className="mt-3 text-xs text-slate-400">
-          최종 순이익 = (정산순액 − 상품원가) − 광고비. 순이익률 {finalMargin.toFixed(1)}%.
-        </p>
-      </Card>
 
       {/* 보조 지표 */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

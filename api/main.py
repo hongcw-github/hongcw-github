@@ -197,7 +197,11 @@ def _build_dashboard(days: int):
     # ── 정산 ──
     fin_daily = _records(finances.sort_values("date")) if finances is not None and not finances.empty else []
     fin_breakdown, fin_totals = [], {"income": 0.0, "deductions": 0.0, "net": 0.0}
+    settlement_ad_spend = 0.0
     if breakdown is not None and not breakdown.empty:
+        settlement_ad_spend = round(
+            -float(breakdown[breakdown["구분"] == "광고"]["금액"].sum()), 2
+        )
         b = breakdown.rename(columns={"구분": "group", "항목": "type", "금액": "amount"})
         fin_breakdown = _records(b)
         fin_totals = {
@@ -235,6 +239,7 @@ def _build_dashboard(days: int):
         },
         "ads": {
             "mode": "live" if settings.has_ads_credentials else "mock",
+            "settlement_spend": settlement_ad_spend,  # 정산에서 차감된 실제 광고비(순이익에 이미 반영)
             "summary": (ads_data or {}).get("summary", {}),
             "daily": _records((ads_data or {}).get("daily")) if ads_data else [],
             "by_name": _records((ads_data or {}).get("by_sku")) if ads_data else [],
