@@ -160,7 +160,14 @@ export default function Page() {
               onCostChange={onCostChange}
             />
           )}
-          {tab === "ads" && <AdsTab ads={data.ads} trueProfit={trueProfit} />}
+          {tab === "ads" && (
+            <AdsTab
+              ads={data.ads}
+              trueProfit={trueProfit}
+              salesDaily={data.sales.daily}
+              days={data.days}
+            />
+          )}
         </>
       )}
 

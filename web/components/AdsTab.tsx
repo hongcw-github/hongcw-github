@@ -19,9 +19,13 @@ import { Card, ErrorBanner, Metric } from "./ui";
 export default function AdsTab({
   ads,
   trueProfit,
+  salesDaily,
+  days,
 }: {
   ads: DashboardData["ads"];
   trueProfit: number;
+  salesDaily: DashboardData["sales"]["daily"];
+  days: number;
 }) {
   if (ads.error) return <ErrorBanner label="광고" error={ads.error} />;
 
@@ -29,18 +33,46 @@ export default function AdsTab({
   const realSpend = ads.settlement_spend;
   const finalMargin = trueProfit && realSpend ? (realSpend / (trueProfit + realSpend)) * 100 : 0;
 
+  // 실제 광고비 총액을 기간 일수로 균등 배분
+  const perDay = realSpend / (days || 1);
+  const spread = salesDaily.map((d) => ({
+    date: d.date,
+    revenue: d.revenue,
+    adSpend: Number(perDay.toFixed(2)),
+  }));
+
   return (
     <div className="grid grid-cols-1 gap-5">
       {/* 실제 광고비 (정산 기준) — 순이익에 이미 반영 */}
       <Card title="🏁 광고비 & 최종 순이익 (정산 기준 실제값)">
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <Metric label="실제 광고비 (정산 차감)" value={fmtUSD(realSpend)} />
-          <Metric label="광고 비중 (vs 순이익+광고)" value={`${finalMargin.toFixed(1)}%`} />
-          <Metric label="최종 순이익 (광고 반영됨)" value={fmtUSD(trueProfit)} accent />
+          <Metric label="일평균 광고비 (균등)" value={fmtUSD(perDay)} />
+          <Metric label="광고 비중" value={`${finalMargin.toFixed(1)}%`} />
+          <Metric label="최종 순이익 (광고 반영)" value={fmtUSD(trueProfit)} accent />
         </div>
         <p className="mt-3 text-xs text-slate-400">
-          광고비는 아마존 정산에서 차감되므로, 위 <b>순이익에 이미 포함</b>되어 있습니다 (잔액 차감 방식).
+          광고비는 아마존 정산에서 차감되므로 위 <b>순이익에 이미 포함</b>됩니다 (잔액 차감 방식).
           {realSpend === 0 && " (이 기간 정산에 광고 차감 내역이 없습니다.)"}
+        </p>
+      </Card>
+
+      {/* 광고비 균등 배분 vs 일별 매출 */}
+      <Card title="📊 일별 매출 vs 광고비 (총 광고비를 기간 균등 배분)">
+        <ResponsiveContainer width="100%" height={280}>
+          <ComposedChart data={spread} margin={{ left: 8, right: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={24} />
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip formatter={(v: number) => fmtUSD(v)} />
+            <Legend />
+            <Bar dataKey="revenue" name="일별 매출" fill="#2563eb" radius={[4, 4, 0, 0]} />
+            <Line type="monotone" dataKey="adSpend" name="광고비(균등 배분)" stroke="#ef4444" strokeWidth={2} dot={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+        <p className="mt-2 text-xs text-slate-400">
+          실제 광고비는 청구 시점에 덩어리로 찍히므로, 총액을 {days}일로 나눠 균등하게 펼친 추정선입니다.
+          정확한 일별 집행액은 Amazon Ads API 연동 시 제공됩니다.
         </p>
       </Card>
 
