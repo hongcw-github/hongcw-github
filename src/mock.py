@@ -48,6 +48,11 @@ def orders(days: int = 90) -> pd.DataFrame:
             if qty <= 0:
                 continue
             order_seq += 1
+            # 데모: 일부 상품은 기간 중반에 가격 변동 (가격추적 시연용)
+            if sku == "TS-BLK-M" and cur > start + (end - start) / 2:
+                price = round(price * 1.08, 2)
+            elif sku == "MUG-300" and cur > start + (end - start) * 2 / 3:
+                price = round(price * 0.9, 2)
             # 시간대 패턴(낮~저녁 비중 ↑), 일부 주문에 프로모션 할인
             hour = rng.choices(range(24), weights=[1, 1, 1, 1, 1, 2, 3, 4, 5, 6, 7, 8,
                                                     8, 7, 7, 6, 6, 7, 8, 7, 5, 4, 3, 2])[0]

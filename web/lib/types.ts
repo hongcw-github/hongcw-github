@@ -29,6 +29,23 @@ export interface DashboardData {
     cancel?: { rate: number; canceled: number; total: number };
     weekly?: { week: string; revenue: number }[];
     tz?: string;
+    price_track?: {
+      sku: string;
+      product_name: string;
+      current: number;
+      min: number;
+      max: number;
+      avg: number;
+      changed: boolean;
+      spread: number;
+    }[];
+    cancel_by_sku?: {
+      sku: string;
+      product_name: string;
+      total: number;
+      canceled: number;
+      rate: number;
+    }[];
   };
   inventory: {
     items: {

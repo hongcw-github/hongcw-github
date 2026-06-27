@@ -126,6 +126,39 @@ def _build_insights(orders: pd.DataFrame, shipped: pd.DataFrame, marketplace: st
     wkrev["revenue"] = wkrev["revenue"].round(2)
     out["weekly"] = _records(wkrev)
 
+    # 가격변동 추적: SKU별 현재가/최저/최고/평균 + 변동 여부
+    p = sh[sh["quantity"] > 0].copy()
+    p["unit_price"] = pd.to_numeric(p["unit_price"], errors="coerce")
+    p = p.dropna(subset=["unit_price"]).sort_values("purchase_date")
+    if not p.empty:
+        pt = p.groupby("sku").agg(
+            product_name=("product_name", "first"),
+            current=("unit_price", "last"),
+            min=("unit_price", "min"),
+            max=("unit_price", "max"),
+            avg=("unit_price", "mean"),
+        ).reset_index()
+        pt["changed"] = (pt["max"] - pt["min"]) > 0.01
+        pt["spread"] = (pt["max"] - pt["min"]).round(2)
+        for c in ["current", "min", "max", "avg"]:
+            pt[c] = pt[c].round(2)
+        pt = pt.sort_values(["changed", "spread"], ascending=False)
+        out["price_track"] = _records(pt)
+
+    # 상품별 취소율 (라인 기준, 주문 3건 이상만)
+    if not orders.empty:
+        tot = orders.groupby("sku").size().rename("total")
+        can = orders[orders["order_status"] == "Canceled"].groupby("sku").size().rename("canceled")
+        cdf = pd.concat([tot, can], axis=1).fillna(0).reset_index()
+        cdf["canceled"] = cdf["canceled"].astype(int)
+        cdf["total"] = cdf["total"].astype(int)
+        cdf = cdf[cdf["total"] >= 3]
+        cdf["rate"] = (cdf["canceled"] / cdf["total"] * 100).round(1)
+        names = orders.dropna(subset=["product_name"]).drop_duplicates("sku").set_index("sku")["product_name"]
+        cdf["product_name"] = cdf["sku"].map(names).fillna(cdf["sku"])
+        cdf = cdf.sort_values("rate", ascending=False)
+        out["cancel_by_sku"] = _records(cdf[["sku", "product_name", "total", "canceled", "rate"]])
+
     return out
 
 
