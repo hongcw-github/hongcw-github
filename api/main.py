@@ -50,7 +50,8 @@ def _section(loader):
 
 
 # ── 간단한 인메모리 캐시 (무거운 리포트 생성을 매 요청마다 반복하지 않도록) ──
-_CACHE_TTL = int(os.getenv("CACHE_TTL_MINUTES", "30")) * 60
+# 세일즈가 잦지 않으므로 기본 2시간. (예열 크론이 만료 전 미리 갱신해 둠)
+_CACHE_TTL = int(os.getenv("CACHE_TTL_MINUTES", "120")) * 60
 _cache: dict[int, tuple[float, dict]] = {}
 
 _TZ = {"CA": "America/Toronto", "US": "America/Los_Angeles", "MX": "America/Mexico_City",
