@@ -1,0 +1,15 @@
+# 백엔드 이미지에 불필요한 것 제외 (빌드 빠르게)
+web/
+node_modules/
+.next/
+.git/
+.github/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.local
+.streamlit/
+app.py
+*.md
