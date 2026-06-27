@@ -37,6 +37,7 @@ def orders(days: int = 90) -> pd.DataFrame:
 
     rows: list[dict] = []
     order_seq = 1000
+    _states = ["CA", "NY", "TX", "FL", "WA", "IL", "ON", "BC", "QC", "AB"]
     cur = start
     while cur <= end:
         # 주말에 주문이 조금 더 많다는 가벼운 패턴
@@ -47,10 +48,14 @@ def orders(days: int = 90) -> pd.DataFrame:
             if qty <= 0:
                 continue
             order_seq += 1
+            # 시간대 패턴(낮~저녁 비중 ↑), 일부 주문에 프로모션 할인
+            hour = rng.choices(range(24), weights=[1, 1, 1, 1, 1, 2, 3, 4, 5, 6, 7, 8,
+                                                    8, 7, 7, 6, 6, 7, 8, 7, 5, 4, 3, 2])[0]
+            discount = round(price * qty * rng.choice([0, 0, 0, 0.1, 0.15]), 2)
             rows.append(
                 {
                     "amazon_order_id": f"111-{order_seq:07d}-{rng.randint(1000000, 9999999)}",
-                    "purchase_date": pd.Timestamp(cur),
+                    "purchase_date": pd.Timestamp(cur) + pd.Timedelta(hours=hour),
                     "sku": sku,
                     "asin": asin,
                     "product_name": name,
@@ -60,6 +65,10 @@ def orders(days: int = 90) -> pd.DataFrame:
                     "order_status": rng.choices(
                         ["Shipped", "Pending", "Canceled"], weights=[88, 8, 4]
                     )[0],
+                    "ship_state": rng.choice(_states),
+                    "promo_discount": discount,
+                    "fulfillment": rng.choices(["AFN", "MFN"], weights=[85, 15])[0],
+                    "is_business": rng.choices(["true", "false"], weights=[12, 88])[0],
                 }
             )
         cur += timedelta(days=1)

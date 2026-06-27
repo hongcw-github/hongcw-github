@@ -10,9 +10,11 @@ import SalesTab from "@/components/SalesTab";
 import InventoryTab from "@/components/InventoryTab";
 import FinanceTab from "@/components/FinanceTab";
 import AdsTab from "@/components/AdsTab";
+import InsightsTab from "@/components/InsightsTab";
 
 const TABS = [
   { key: "sales", label: "📈 주문/매출" },
+  { key: "insights", label: "🔍 분석" },
   { key: "inventory", label: "📦 재고" },
   { key: "finance", label: "💰 정산/수익" },
   { key: "ads", label: "📣 광고" },
@@ -150,6 +152,7 @@ export default function Page() {
       {data && (
         <>
           {tab === "sales" && <SalesTab sales={data.sales} />}
+          {tab === "insights" && <InsightsTab insights={data.insights} />}
           {tab === "inventory" && <InventoryTab inventory={data.inventory} />}
           {tab === "finance" && (
             <FinanceTab

@@ -53,6 +53,81 @@ def _section(loader):
 _CACHE_TTL = int(os.getenv("CACHE_TTL_MINUTES", "30")) * 60
 _cache: dict[int, tuple[float, dict]] = {}
 
+_TZ = {"CA": "America/Toronto", "US": "America/Los_Angeles", "MX": "America/Mexico_City",
+       "UK": "Europe/London", "GB": "Europe/London", "DE": "Europe/Berlin", "JP": "Asia/Tokyo"}
+
+
+def _build_insights(orders: pd.DataFrame, shipped: pd.DataFrame, marketplace: str) -> dict:
+    """주문 데이터에서 추가 인사이트(파레토/요일·시간/지역/프로모션·취소율) 집계."""
+    out: dict = {}
+    if shipped.empty:
+        return out
+
+    sh = shipped.copy()
+    sh["purchase_date"] = pd.to_datetime(sh["purchase_date"], errors="coerce")
+
+    # 파레토(ABC): SKU 매출 누적 비중
+    sku_rev = sh.groupby("sku")["item_price"].sum().sort_values(ascending=False)
+    total_rev = float(sku_rev.sum())
+    cum = 0.0
+    pareto = []
+    for sku, rev in sku_rev.items():
+        cum += float(rev)
+        pareto.append({"sku": sku, "revenue": round(float(rev), 2),
+                       "cum_pct": round(cum / total_rev * 100, 1) if total_rev else 0})
+    out["pareto"] = pareto
+
+    # 요일별 (0=월)
+    wd = sh.groupby(sh["purchase_date"].dt.dayofweek)["item_price"].sum()
+    out["by_weekday"] = [{"weekday": int(i), "revenue": round(float(wd.get(i, 0.0)), 2)} for i in range(7)]
+
+    # 시간대별 (마켓플레이스 로컬 타임존으로 변환)
+    try:
+        tz = _TZ.get(marketplace, "UTC")
+        local = sh["purchase_date"].dt.tz_localize("UTC").dt.tz_convert(tz)
+        hr = sh.assign(_h=local.dt.hour).groupby("_h")["item_price"].sum()
+        out["by_hour"] = [{"hour": int(i), "revenue": round(float(hr.get(i, 0.0)), 2)} for i in range(24)]
+        out["tz"] = tz
+    except Exception:  # noqa: BLE001
+        out["by_hour"] = []
+
+    # 지역별 (state)
+    if "ship_state" in sh.columns:
+        st = (sh.dropna(subset=["ship_state"]).groupby("ship_state")
+              .agg(revenue=("item_price", "sum"), units=("quantity", "sum"))
+              .reset_index().sort_values("revenue", ascending=False).head(15))
+        st = st[st["ship_state"].astype(str).str.strip() != ""]
+        out["by_state"] = _records(st)
+
+    # 프로모션
+    if "promo_discount" in sh.columns:
+        disc = pd.to_numeric(sh["promo_discount"], errors="coerce").fillna(0).abs()
+        discounted_units = int((disc > 0).sum())
+        out["promo"] = {
+            "total_discount": round(float(disc.sum()), 2),
+            "discounted_share": round(discounted_units / len(sh) * 100, 1) if len(sh) else 0,
+            "discounted_revenue": round(float(sh.loc[disc > 0, "item_price"].sum()), 2),
+        }
+
+    # 취소율 (전체 주문 기준)
+    if not orders.empty:
+        total_orders = int(orders["amazon_order_id"].nunique())
+        canceled = int(orders[orders["order_status"] == "Canceled"]["amazon_order_id"].nunique())
+        out["cancel"] = {
+            "rate": round(canceled / total_orders * 100, 1) if total_orders else 0,
+            "canceled": canceled,
+            "total": total_orders,
+        }
+
+    # 주별 추세
+    wk = sh.assign(_w=sh["purchase_date"].dt.to_period("W").dt.start_time)
+    wkrev = wk.groupby("_w")["item_price"].sum().reset_index()
+    wkrev.columns = ["week", "revenue"]
+    wkrev["revenue"] = wkrev["revenue"].round(2)
+    out["weekly"] = _records(wkrev)
+
+    return out
+
 
 # 대시보드 접근 비밀번호 (설정 시 /api/dashboard 호출에 키 필요; 없으면 공개)
 _DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD")
@@ -178,6 +253,9 @@ def _build_dashboard(days: int):
         sc.columns = ["status", "count"]
         status = _records(sc)
 
+    # ── 주문 인사이트 (파레토/요일·시간/지역/프로모션·취소율) ──
+    insights = _build_insights(orders, shipped, settings.marketplace)
+
     # ── 재고: 0재고 숨김 + 주문 데이터로 상품명 보강 ──
     inv_items, inv_hidden = [], 0
     if inventory is not None and not inventory.empty:
@@ -222,6 +300,7 @@ def _build_dashboard(days: int):
             "aov": round(aov, 2),
         },
         "sales": {"daily": daily_sales, "by_sku": by_sku, "status": status, "error": orders_err},
+        "insights": insights,
         "inventory": {"items": inv_items, "hidden": inv_hidden, "error": inv_err},
         "finance": {
             "daily": fin_daily,

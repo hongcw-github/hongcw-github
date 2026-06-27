@@ -20,6 +20,16 @@ export interface DashboardData {
     status: { status: string; count: number }[];
     error: ApiError | null;
   };
+  insights: {
+    pareto?: { sku: string; revenue: number; cum_pct: number }[];
+    by_weekday?: { weekday: number; revenue: number }[];
+    by_hour?: { hour: number; revenue: number }[];
+    by_state?: { ship_state: string; revenue: number; units: number }[];
+    promo?: { total_discount: number; discounted_share: number; discounted_revenue: number };
+    cancel?: { rate: number; canceled: number; total: number };
+    weekly?: { week: string; revenue: number }[];
+    tz?: string;
+  };
   inventory: {
     items: {
       sku: string;

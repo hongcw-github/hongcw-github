@@ -250,6 +250,11 @@ def _parse_all_orders(text: str) -> pd.DataFrame:
             "item_price": price.round(2),
             "unit_price": unit_price,
             "order_status": col("item-status", "order-status"),
+            # 분석용 추가 컬럼 (리포트에 있으면 활용)
+            "ship_state": col("ship-state"),
+            "promo_discount": pd.to_numeric(col("item-promotion-discount"), errors="coerce").fillna(0.0).abs(),
+            "fulfillment": col("fulfillment-channel"),
+            "is_business": col("is-business-order"),
         }
     )
     out["purchase_date"] = out["purchase_date"].dt.tz_localize(None)
