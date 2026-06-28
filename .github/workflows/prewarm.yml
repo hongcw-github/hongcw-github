@@ -13,15 +13,9 @@ jobs:
     steps:
       - name: Wake instance + warm cache
         env:
-          BASE: ${{ secrets.BACKEND_URL }}
-          KEY: ${{ secrets.DASHBOARD_PASSWORD }}
+          # GCP Cloud Run 백엔드 (secret 으로 덮어쓰려면 BACKEND_URL 설정)
+          BASE: ${{ secrets.BACKEND_URL || 'https://hongcw-github-419197548925.us-east1.run.app' }}
         run: |
-          if [ -z "$BASE" ]; then
-            echo "BACKEND_URL secret 이 없습니다. 건너뜀."
-            exit 0
-          fi
-          # 1) 인스턴스 깨우기
           curl -s -m 120 "$BASE/api/health" -o /dev/null || true
-          # 2) 기본 화면(30일) 캐시 채우기 (비번 있으면 헤더로 전달)
-          curl -s -m 300 -H "X-Dashboard-Key: $KEY" "$BASE/api/dashboard?days=30" -o /dev/null || true
+          curl -s -m 300 "$BASE/api/dashboard?days=30" -o /dev/null || true
           echo "prewarm done"

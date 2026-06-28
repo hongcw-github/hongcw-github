@@ -1,6 +1,7 @@
 import type { DashboardData } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// 백엔드: GCP Cloud Run (공개 엔드포인트라 코드에 직접 고정 — Vercel 환경변수 불필요)
+const BASE = "https://hongcw-github-419197548925.us-east1.run.app";
 
 const KEY_STORE = "dash_key";
 
