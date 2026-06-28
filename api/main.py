@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -56,6 +57,52 @@ _cache: dict[int, tuple[float, dict]] = {}
 
 _TZ = {"CA": "America/Toronto", "US": "America/Los_Angeles", "MX": "America/Mexico_City",
        "UK": "Europe/London", "GB": "Europe/London", "DE": "Europe/Berlin", "JP": "Asia/Tokyo"}
+
+# ── 증분 주문 패칭: 과거는 보관(인메모리 히스토리)하고 최근 며칠만 다시 받는다 ──
+_ORDERS_OVERLAP_DAYS = 10   # 최근 이 기간만 새로 받아 상태변경(취소/배송) 반영
+_ORDERS_KEEP_DAYS = 400     # 히스토리 최대 보관 기간
+_orders_hist: pd.DataFrame | None = None
+_orders_lock = threading.Lock()
+
+
+def _merge_orders(hist: pd.DataFrame | None, fresh: pd.DataFrame, now: pd.Timestamp) -> pd.DataFrame:
+    """히스토리와 새로 받은 데이터를 합쳐 중복 제거(최근 fetch 우선)하고 오래된 건 정리."""
+    fresh = fresh.copy()
+    fresh["purchase_date"] = pd.to_datetime(fresh["purchase_date"], errors="coerce")
+    parts = [p for p in (hist, fresh) if p is not None and not p.empty]
+    merged = pd.concat(parts, ignore_index=True) if parts else fresh
+    merged = merged.dropna(subset=["amazon_order_id"])
+    # 같은 (주문, SKU)는 마지막(=새로 받은) 행이 이김 → 상태/가격 최신 반영
+    merged = merged.drop_duplicates(subset=["amazon_order_id", "sku"], keep="last")
+    cutoff = now - pd.Timedelta(days=_ORDERS_KEEP_DAYS)
+    merged = merged[merged["purchase_date"] >= cutoff].reset_index(drop=True)
+    return merged
+
+
+def _orders_incremental(settings, days: int) -> pd.DataFrame:
+    """증분 주문 조회. live 에서만 동작하고, mock 은 그대로 전체 생성."""
+    if settings.use_mock:
+        return repository.get_orders(settings, days)
+
+    global _orders_hist
+    now = pd.Timestamp.now()
+    needed_start = now - pd.Timedelta(days=days)
+
+    with _orders_lock:
+        hist = _orders_hist
+        deep_enough = (
+            hist is not None and not hist.empty
+            and pd.to_datetime(hist["purchase_date"]).min() <= needed_start
+        )
+        if deep_enough:
+            fresh = repository.get_orders(settings, _ORDERS_OVERLAP_DAYS)  # 최근만
+        else:
+            fresh = repository.get_orders(settings, days)  # 처음/더 긴 기간 → 전체
+
+        merged = _merge_orders(hist, fresh, now)
+        _orders_hist = merged
+
+    return merged[merged["purchase_date"] >= needed_start].reset_index(drop=True)
 
 
 def _build_insights(orders: pd.DataFrame, shipped: pd.DataFrame, marketplace: str) -> dict:
@@ -210,7 +257,7 @@ def _build_dashboard(days: int):
     # 리포트(createReport) 기반인 orders·inventory 는 동시에 부르면 한도에 걸리므로
     # 한 스레드에서 순차 실행하고, 정산 계열만 병렬로 받는다.
     def _orders_then_inventory():
-        o = _section(lambda: repository.get_orders(settings, days))
+        o = _section(lambda: _orders_incremental(settings, days))
         i = _section(lambda: repository.get_inventory(settings))
         return o, i
 
