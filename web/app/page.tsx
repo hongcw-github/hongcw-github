@@ -44,7 +44,8 @@ export default function Page() {
   );
 
   const hasData = !!data?.kpis;
-  const building = !!data?.building && !hasData;
+  // 첫 로딩(동기 빌드 ~1~2분) 또는 백엔드가 '준비 중' 응답일 때 안내 화면 표시
+  const preparing = (isLoading || !!data?.building) && !hasData;
 
   // 입력한 원가로 진짜 순이익 계산 (KPI·정산·광고 탭이 공유)
   const cogs = hasData ? data!.sales.by_sku.reduce((s, r) => s + (costs[r.sku] || 0) * r.units, 0) : 0;
@@ -150,16 +151,10 @@ export default function Page() {
         ))}
       </nav>
 
-      {(isLoading || building) && (
+      {preparing && (
         <div className="py-20 text-center text-slate-400">
-          {building ? (
-            <>
-              <div className="mb-2 text-base">⏳ 데이터를 준비하는 중입니다…</div>
-              <div className="text-xs">최근 {days}일 리포트를 처음 만드는 중이에요. 1~2분 후 자동으로 표시됩니다.</div>
-            </>
-          ) : (
-            "불러오는 중…"
-          )}
+          <div className="mb-2 text-base">⏳ 데이터를 준비하는 중입니다…</div>
+          <div className="text-xs">최근 {days}일 리포트를 불러오는 중이에요. 처음이면 1~2분 걸릴 수 있어요.</div>
         </div>
       )}
       {error && (

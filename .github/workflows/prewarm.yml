@@ -17,5 +17,9 @@ jobs:
           BASE: ${{ secrets.BACKEND_URL || 'https://hongcw-github-419197548925.us-east1.run.app' }}
         run: |
           curl -s -m 120 "$BASE/api/health" -o /dev/null || true
-          curl -s -m 300 "$BASE/api/dashboard?days=30" -o /dev/null || true
+          # 모든 기간 캐시를 데워 둔다. 빌드는 요청 안에서 동기로 끝나므로(크론이
+          # 기다림) 사용자는 기간을 바꿔도 즉시 캐시된 결과를 받는다.
+          for d in 30 60 90 14 7; do
+            curl -s -m 300 "$BASE/api/dashboard?days=$d" -o /dev/null || true
+          done
           echo "prewarm done"
