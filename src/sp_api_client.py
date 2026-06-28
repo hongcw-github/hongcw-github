@@ -65,7 +65,7 @@ def _fetch_report_text(
         report_id = created.payload["reportId"]
 
         document_id = None
-        for _ in range(60):  # 최대 ~5분
+        for _ in range(90):  # 3초 간격 × 90 ≈ 최대 4.5분
             report = _retry(lambda: client.get_report(report_id))
             status = report.payload.get("processingStatus")
             if status == "DONE":
@@ -74,7 +74,7 @@ def _fetch_report_text(
             if status in ("CANCELLED", "FATAL"):
                 last_status = status
                 break
-            time.sleep(5)
+            time.sleep(3)
 
         if document_id:
             doc = _retry(lambda: client.get_report_document(document_id))

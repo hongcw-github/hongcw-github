@@ -254,19 +254,16 @@ def dashboard(
 def _build_dashboard(days: int):
     settings = load_settings()
 
-    # 리포트(createReport) 기반인 orders·inventory 는 동시에 부르면 한도에 걸리므로
-    # 한 스레드에서 순차 실행하고, 정산 계열만 병렬로 받는다.
-    def _orders_then_inventory():
-        o = _section(lambda: _orders_incremental(settings, days))
-        i = _section(lambda: repository.get_inventory(settings))
-        return o, i
-
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        f_si = ex.submit(_orders_then_inventory)
+    # 5개 섹션을 모두 병렬로 받아 첫 로딩 시간을 최댓값 수준으로 단축.
+    # createReport 동시 호출은 버스트 한도(15) 안이고, throttle 은 _retry 가 처리한다.
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        f_orders = ex.submit(_section, lambda: _orders_incremental(settings, days))
+        f_inv = ex.submit(_section, lambda: repository.get_inventory(settings))
         f_fin = ex.submit(_section, lambda: repository.get_finances(settings, days))
         f_bd = ex.submit(_section, lambda: repository.get_finance_breakdown(settings, days))
         f_ads = ex.submit(_section, lambda: repository.get_ads(settings, days))
-        (orders, orders_err), (inventory, inv_err) = f_si.result()
+        orders, orders_err = f_orders.result()
+        inventory, inv_err = f_inv.result()
         finances, fin_err = f_fin.result()
         breakdown, bd_err = f_bd.result()
         ads_data, ads_err = f_ads.result()
