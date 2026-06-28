@@ -241,20 +241,21 @@ def dashboard(
     now = time.time()
     hit = _cache.get(days)
 
-    # 수동 새로고침: 동기 재생성(증분이라 warm 이면 빠름)
-    if refresh:
-        return _store(days, _build_dashboard(days))
+    # 30일을 볼 때 나머지 기간(7·14·60·90)을 백그라운드에서 미리 준비 (선택 시 즉시)
+    if days == 30:
+        _prebuild((7, 14, 60, 90))
 
+    # 신선한 캐시 → 즉시
+    if hit and not refresh and (now - hit[0] < hit[2]):
+        return {**hit[1], "cached": True}
+
+    # (재)생성 필요: 항상 백그라운드에서 — HTTP 요청을 몇 분씩 붙잡지 않는다(타임아웃/멈춤 방지)
+    _bg_refresh(days)
     if hit:
-        ts, payload, ttl = hit
-        if now - ts >= ttl:
-            # 만료됐어도 일단 옛 데이터 즉시 반환하고, 갱신은 백그라운드에서
-            _bg_refresh(days)
-            return {**payload, "cached": True, "stale": True}
-        return {**payload, "cached": True}
-
-    # 캐시가 아예 없을 때만 동기 생성(첫 1회) — 예열이 보통 이걸 미리 처리함
-    return _store(days, _build_dashboard(days))
+        # 옛 데이터라도 즉시 보여주고, 갱신 끝나면 프론트가 폴링으로 받아감
+        return {**hit[1], "cached": True, "stale": True, "building": True}
+    # 캐시 자체가 없으면 '준비 중' — 프론트가 폴링하다가 완성되면 표시
+    return {"building": True, "days": days}
 
 
 def _store(days: int, payload: dict) -> dict:
@@ -266,10 +267,12 @@ def _store(days: int, payload: dict) -> dict:
 
 _refreshing: set[int] = set()
 _refresh_lock = threading.Lock()
+# 여러 기간 빌드가 동시에 createReport 를 부르면 throttle 되므로 한 번에 하나씩만 빌드
+_build_lock = threading.Lock()
 
 
 def _bg_refresh(days: int):
-    """만료된 캐시를 백그라운드에서 갱신 (중복 실행 방지)."""
+    """만료된 캐시를 백그라운드에서 갱신 (중복 실행 방지, 빌드는 전역 직렬화)."""
     with _refresh_lock:
         if days in _refreshing:
             return
@@ -277,7 +280,8 @@ def _bg_refresh(days: int):
 
     def _run():
         try:
-            _store(days, _build_dashboard(days))
+            with _build_lock:  # 한 번에 하나의 빌드만 → throttle 방지
+                _store(days, _build_dashboard(days))
         except Exception:  # noqa: BLE001
             pass
         finally:
@@ -287,6 +291,33 @@ def _bg_refresh(days: int):
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _prebuild(extra_days=(7, 14, 60, 90)):
+    """자주 쓰는 기간을 백그라운드에서 미리 빌드해 둔다 (없거나 만료된 것만)."""
+    now = time.time()
+    for d in extra_days:
+        hit = _cache.get(d)
+        if not hit or (now - hit[0] >= hit[2]):
+            _bg_refresh(d)
+
+
+# 재고는 조회 기간과 무관(현재 재고 스냅샷)하므로 모든 기간이 공유 (리포트 1회만)
+_inv_cache: tuple[float, object] | None = None
+_inv_lock = threading.Lock()
+
+
+def _inventory_cached(settings):
+    global _inv_cache
+    now = time.time()
+    if _inv_cache and now - _inv_cache[0] < _CACHE_TTL:
+        return _inv_cache[1]
+    with _inv_lock:
+        if _inv_cache and now - _inv_cache[0] < _CACHE_TTL:
+            return _inv_cache[1]
+        inv = repository.get_inventory(settings)
+        _inv_cache = (time.time(), inv)
+        return inv
+
+
 def _build_dashboard(days: int):
     settings = load_settings()
 
@@ -294,7 +325,7 @@ def _build_dashboard(days: int):
     # 한 스레드에서 순차 실행하고, 정산/광고 계열만 병렬로 받는다.
     def _orders_then_inventory():
         o = _section(lambda: _orders_incremental(settings, days))
-        i = _section(lambda: repository.get_inventory(settings))
+        i = _section(lambda: _inventory_cached(settings))  # 기간 무관 → 공용 캐시
         return o, i
 
     with ThreadPoolExecutor(max_workers=4) as ex:

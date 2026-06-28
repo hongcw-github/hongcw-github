@@ -35,12 +35,20 @@ export default function Page() {
   const { data, error, isLoading, mutate } = useSWR<DashboardData>(
     ["dashboard", days],
     () => fetchDashboard(days),
-    { revalidateOnFocus: false, shouldRetryOnError: false }
+    {
+      revalidateOnFocus: false,
+      shouldRetryOnError: false,
+      // 백엔드가 '준비 중'이면 4초마다 폴링해서 완성되면 자동 표시
+      refreshInterval: (latest) => (latest?.building ? 4000 : 0),
+    }
   );
 
+  const hasData = !!data?.kpis;
+  const building = !!data?.building && !hasData;
+
   // 입력한 원가로 진짜 순이익 계산 (KPI·정산·광고 탭이 공유)
-  const cogs = data ? data.sales.by_sku.reduce((s, r) => s + (costs[r.sku] || 0) * r.units, 0) : 0;
-  const trueProfit = data ? data.profit.amazon_net - cogs : 0;
+  const cogs = hasData ? data!.sales.by_sku.reduce((s, r) => s + (costs[r.sku] || 0) * r.units, 0) : 0;
+  const trueProfit = hasData ? data!.profit.amazon_net - cogs : 0;
 
   // 비밀번호 게이트: 백엔드가 401 이면 로그인 화면 표시
   if (error instanceof UnauthorizedError) {
@@ -81,14 +89,15 @@ export default function Page() {
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-brand-dark">Amazon 셀러 대시보드</h1>
-          {data && (
+          {hasData && (
             <p className="mt-1 text-xs text-slate-500">
               <span
                 className={`mr-2 inline-block h-2 w-2 rounded-full ${
-                  data.mode === "live" ? "bg-green-500" : "bg-amber-400"
+                  data!.mode === "live" ? "bg-green-500" : "bg-amber-400"
                 }`}
               />
-              {data.mode === "live" ? "Live (SP-API)" : "Mock"} · {data.marketplace}
+              {data!.mode === "live" ? "Live (SP-API)" : "Mock"} · {data!.marketplace}
+              {data!.stale && " · 갱신 중…"}
             </p>
           )}
         </div>
@@ -114,13 +123,13 @@ export default function Page() {
       </header>
 
       {/* KPI (순이익은 입력한 원가를 반영해 클라이언트에서 계산) */}
-      {data && (
+      {hasData && (
         <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
-          <Metric label="총 매출" value={fmtUSD(data.kpis.revenue)} />
+          <Metric label="총 매출" value={fmtUSD(data!.kpis.revenue)} />
           <Metric label="순이익" value={fmtUSD(trueProfit)} accent />
-          <Metric label="판매 수량" value={fmtNum(data.kpis.units)} />
-          <Metric label="주문 수" value={fmtNum(data.kpis.orders)} />
-          <Metric label="객단가(AOV)" value={fmtUSD(data.kpis.aov)} />
+          <Metric label="판매 수량" value={fmtNum(data!.kpis.units)} />
+          <Metric label="주문 수" value={fmtNum(data!.kpis.orders)} />
+          <Metric label="객단가(AOV)" value={fmtUSD(data!.kpis.aov)} />
         </div>
       )}
 
@@ -141,34 +150,44 @@ export default function Page() {
         ))}
       </nav>
 
-      {isLoading && <div className="py-20 text-center text-slate-400">불러오는 중…</div>}
+      {(isLoading || building) && (
+        <div className="py-20 text-center text-slate-400">
+          {building ? (
+            <>
+              <div className="mb-2 text-base">⏳ 데이터를 준비하는 중입니다…</div>
+              <div className="text-xs">최근 {days}일 리포트를 처음 만드는 중이에요. 1~2분 후 자동으로 표시됩니다.</div>
+            </>
+          ) : (
+            "불러오는 중…"
+          )}
+        </div>
+      )}
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
-          백엔드 API에 연결할 수 없습니다. ({String(error)})<br />
-          FastAPI 서버(<code>uvicorn api.main:app</code>)가 켜져 있는지, NEXT_PUBLIC_API_URL이 맞는지 확인하세요.
+          백엔드 API에 연결할 수 없습니다. ({String(error)})
         </div>
       )}
 
-      {data && (
+      {hasData && (
         <>
-          {tab === "sales" && <SalesTab sales={data.sales} />}
-          {tab === "insights" && <InsightsTab insights={data.insights} />}
-          {tab === "inventory" && <InventoryTab inventory={data.inventory} />}
+          {tab === "sales" && <SalesTab sales={data!.sales} />}
+          {tab === "insights" && <InsightsTab insights={data!.insights} />}
+          {tab === "inventory" && <InventoryTab inventory={data!.inventory} />}
           {tab === "finance" && (
             <FinanceTab
-              finance={data.finance}
-              profit={data.profit}
-              bySku={data.sales.by_sku}
+              finance={data!.finance}
+              profit={data!.profit}
+              bySku={data!.sales.by_sku}
               costs={costs}
               onCostChange={onCostChange}
             />
           )}
           {tab === "ads" && (
             <AdsTab
-              ads={data.ads}
+              ads={data!.ads}
               trueProfit={trueProfit}
-              salesDaily={data.sales.daily}
-              days={data.days}
+              salesDaily={data!.sales.daily}
+              days={data!.days}
             />
           )}
         </>

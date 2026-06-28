@@ -4,6 +4,9 @@ export interface ApiError {
 }
 
 export interface DashboardData {
+  building?: boolean;
+  stale?: boolean;
+  cached?: boolean;
   mode: "mock" | "live";
   marketplace: string;
   days: number;
