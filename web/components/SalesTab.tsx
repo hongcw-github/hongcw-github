@@ -5,6 +5,9 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
+  Legend,
+  Line,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -13,7 +16,7 @@ import {
   YAxis,
 } from "recharts";
 import type { DashboardData } from "@/lib/types";
-import { fmtUSD, shortName } from "@/lib/api";
+import { fmtNum, fmtUSD, shortName } from "@/lib/api";
 import { Card, ErrorBanner } from "./ui";
 
 const PIE = ["#22c55e", "#f59e0b", "#ef4444", "#6366f1", "#06b6d4"];
@@ -23,15 +26,41 @@ export default function SalesTab({ sales }: { sales: DashboardData["sales"] }) {
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-      <Card title="일별 매출" className="lg:col-span-2">
+      <Card title="일별 매출 · 판매 수량" className="lg:col-span-2">
         <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={sales.daily} margin={{ left: 8, right: 8 }}>
+          <ComposedChart data={sales.daily} margin={{ left: 8, right: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={24} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(v: number) => fmtUSD(v)} />
-            <Bar dataKey="revenue" name="매출" fill="#2563eb" radius={[4, 4, 0, 0]} />
-          </BarChart>
+            <YAxis yAxisId="rev" tick={{ fontSize: 11 }} />
+            <YAxis
+              yAxisId="units"
+              orientation="right"
+              allowDecimals={false}
+              tick={{ fontSize: 11 }}
+            />
+            <Tooltip
+              formatter={(v: number, name) =>
+                name === "판매 수량" ? `${fmtNum(v)}개` : fmtUSD(v)
+              }
+            />
+            <Legend />
+            <Bar
+              yAxisId="rev"
+              dataKey="revenue"
+              name="매출"
+              fill="#2563eb"
+              radius={[4, 4, 0, 0]}
+            />
+            <Line
+              yAxisId="units"
+              type="monotone"
+              dataKey="units"
+              name="판매 수량"
+              stroke="#f59e0b"
+              strokeWidth={2}
+              dot={false}
+            />
+          </ComposedChart>
         </ResponsiveContainer>
       </Card>
 
