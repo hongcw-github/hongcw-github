@@ -238,32 +238,71 @@ def dashboard(
         if provided != _DASHBOARD_PASSWORD:
             raise HTTPException(status_code=401, detail="unauthorized")
 
-    # 캐시 히트 시 즉시 반환
+    now = time.time()
     hit = _cache.get(days)
-    if hit and not refresh and (time.time() - hit[0] < hit[2]):
-        return {**hit[1], "cached": True}
 
-    payload = _build_dashboard(days)
-    # 에러가 섞인(특히 일시적 throttle) 결과는 짧게만 캐시해 곧 다시 시도되게 한다
+    # 수동 새로고침: 동기 재생성(증분이라 warm 이면 빠름)
+    if refresh:
+        return _store(days, _build_dashboard(days))
+
+    if hit:
+        ts, payload, ttl = hit
+        if now - ts >= ttl:
+            # 만료됐어도 일단 옛 데이터 즉시 반환하고, 갱신은 백그라운드에서
+            _bg_refresh(days)
+            return {**payload, "cached": True, "stale": True}
+        return {**payload, "cached": True}
+
+    # 캐시가 아예 없을 때만 동기 생성(첫 1회) — 예열이 보통 이걸 미리 처리함
+    return _store(days, _build_dashboard(days))
+
+
+def _store(days: int, payload: dict) -> dict:
     has_err = any(payload[s].get("error") for s in ("sales", "inventory", "finance"))
     ttl = 120 if has_err else _CACHE_TTL
     _cache[days] = (time.time(), payload, ttl)
     return payload
 
 
+_refreshing: set[int] = set()
+_refresh_lock = threading.Lock()
+
+
+def _bg_refresh(days: int):
+    """만료된 캐시를 백그라운드에서 갱신 (중복 실행 방지)."""
+    with _refresh_lock:
+        if days in _refreshing:
+            return
+        _refreshing.add(days)
+
+    def _run():
+        try:
+            _store(days, _build_dashboard(days))
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            with _refresh_lock:
+                _refreshing.discard(days)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _build_dashboard(days: int):
     settings = load_settings()
 
-    # 5개 섹션을 모두 병렬로 받아 첫 로딩 시간을 최댓값 수준으로 단축.
-    # createReport 동시 호출은 버스트 한도(15) 안이고, throttle 은 _retry 가 처리한다.
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        f_orders = ex.submit(_section, lambda: _orders_incremental(settings, days))
-        f_inv = ex.submit(_section, lambda: repository.get_inventory(settings))
+    # 리포트(createReport) 기반인 orders·inventory 를 동시에 부르면 throttle 되므로
+    # 한 스레드에서 순차 실행하고, 정산/광고 계열만 병렬로 받는다.
+    def _orders_then_inventory():
+        o = _section(lambda: _orders_incremental(settings, days))
+        i = _section(lambda: repository.get_inventory(settings))
+        return o, i
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        f_si = ex.submit(_orders_then_inventory)
         f_fin = ex.submit(_section, lambda: repository.get_finances(settings, days))
         f_bd = ex.submit(_section, lambda: repository.get_finance_breakdown(settings, days))
         f_ads = ex.submit(_section, lambda: repository.get_ads(settings, days))
-        orders, orders_err = f_orders.result()
-        inventory, inv_err = f_inv.result()
+        (orders, orders_err), (inventory, inv_err) = f_si.result()
         finances, fin_err = f_fin.result()
         breakdown, bd_err = f_bd.result()
         ads_data, ads_err = f_ads.result()
