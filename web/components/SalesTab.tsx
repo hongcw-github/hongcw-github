@@ -5,9 +5,6 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  ComposedChart,
-  Legend,
-  Line,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -26,41 +23,27 @@ export default function SalesTab({ sales }: { sales: DashboardData["sales"] }) {
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-      <Card title="일별 매출 · 판매 수량" className="lg:col-span-2">
-        <ResponsiveContainer width="100%" height={280}>
-          <ComposedChart data={sales.daily} margin={{ left: 8, right: 8 }}>
+      <Card title="일별 매출" className="lg:col-span-2">
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={sales.daily} margin={{ left: 8, right: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={24} />
-            <YAxis yAxisId="rev" tick={{ fontSize: 11 }} />
-            <YAxis
-              yAxisId="units"
-              orientation="right"
-              allowDecimals={false}
-              tick={{ fontSize: 11 }}
-            />
-            <Tooltip
-              formatter={(v: number, name) =>
-                name === "판매 수량" ? `${fmtNum(v)}개` : fmtUSD(v)
-              }
-            />
-            <Legend />
-            <Bar
-              yAxisId="rev"
-              dataKey="revenue"
-              name="매출"
-              fill="#2563eb"
-              radius={[4, 4, 0, 0]}
-            />
-            <Line
-              yAxisId="units"
-              type="monotone"
-              dataKey="units"
-              name="판매 수량"
-              stroke="#f59e0b"
-              strokeWidth={2}
-              dot={false}
-            />
-          </ComposedChart>
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip formatter={(v: number) => fmtUSD(v)} />
+            <Bar dataKey="revenue" name="매출" fill="#2563eb" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </Card>
+
+      <Card title="일별 판매 수량" className="lg:col-span-2">
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={sales.daily} margin={{ left: 8, right: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={24} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+            <Tooltip formatter={(v: number) => `${fmtNum(v)}개`} />
+            <Bar dataKey="units" name="판매 수량" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+          </BarChart>
         </ResponsiveContainer>
       </Card>
 
