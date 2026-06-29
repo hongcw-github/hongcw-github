@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import useSWR from "swr";
+import { useEffect, useState } from "react";
+import useSWR, { preload } from "swr";
+
+const WINDOWS = [7, 14, 30, 60, 90];
 import { fetchDashboard, fmtNum, fmtUSD, setKey, UnauthorizedError } from "@/lib/api";
 import { loadCosts, saveCosts, type CostMap } from "@/lib/costs";
 import type { DashboardData } from "@/lib/types";
@@ -46,6 +48,16 @@ export default function Page() {
   const hasData = !!data?.kpis;
   // 첫 로딩(동기 빌드 ~1~2분) 또는 백엔드가 '준비 중' 응답일 때 안내 화면 표시
   const preparing = (isLoading || !!data?.building) && !hasData;
+
+  // 현재 기간이 뜨면 나머지 기간을 백그라운드에서 미리 받아 둔다.
+  // (Cloud Run 은 '요청 처리 중'에만 CPU 를 주므로, 브라우저가 실제 HTTP 요청을
+  //  쏴서 데워야 빌드가 끝난다. 그러면 기간을 바꿔도 캐시돼 있어 즉시 뜬다.)
+  useEffect(() => {
+    if (!hasData) return;
+    WINDOWS.filter((d) => d !== days).forEach((d) => {
+      preload(["dashboard", d], () => fetchDashboard(d));
+    });
+  }, [hasData, days]);
 
   // 입력한 원가로 진짜 순이익 계산 (KPI·정산·광고 탭이 공유)
   const cogs = hasData ? data!.sales.by_sku.reduce((s, r) => s + (costs[r.sku] || 0) * r.units, 0) : 0;
