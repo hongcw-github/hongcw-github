@@ -137,26 +137,39 @@ def finances(days: int = 90) -> pd.DataFrame:
 
 
 def finance_breakdown(days: int = 90) -> pd.DataFrame:
-    """정산 상세 내역(샘플). 수입 +, 차감 −."""
-    fin = finances(days)
-    revenue = float(fin["revenue"].sum())
-    referral = float(fin["referral_fee"].sum())
-    fba = float(fin["fba_fee"].sum())
+    """정산 상세 내역(샘플). 수입 +, 차감 −.
 
-    rows = [
-        ("매출", "Principal", round(revenue, 2)),
-        ("매출", "Shipping", round(revenue * 0.04, 2)),
-        ("매출", "Tax", round(revenue * 0.11, 2)),
-        ("수수료", "Commission(판매수수료)", -round(referral, 2)),
-        ("수수료", "FBAPerUnitFulfillmentFee", -round(fba, 2)),
-        ("수수료", "FixedClosingFee", -round(revenue * 0.01, 2)),
-        ("프로모션", "Promotion(할인)", -round(revenue * 0.03, 2)),
-        ("환불", "RefundedPrincipal", -round(revenue * 0.02, 2)),
-        ("서비스 수수료", "FBAStorageFee(보관료)", -round(12.50, 2)),
-        ("서비스 수수료", "Subscription(월구독료)", -39.99),
-        ("광고", "Sponsored Products(광고비)", -round(revenue * 0.12, 2)),
-    ]
-    return pd.DataFrame(rows, columns=["구분", "항목", "금액"])
+    날짜별로 분해해 두어 짧은 기간(7·14일)은 잘라 쓸 수 있게 한다.
+    매출 연동 항목은 그 날 매출에 비례하고, 기간 고정비(보관료·구독료)는
+    일별로 균등 분산한다.
+    """
+    fin = finances(days)
+    cols = ["날짜", "구분", "항목", "금액"]
+    if fin.empty:
+        return pd.DataFrame(columns=cols)
+
+    total_rev = float(fin["revenue"].sum()) or 1.0
+    rows = []
+    for _, r in fin.iterrows():
+        date = r["date"]
+        rev = float(r["revenue"])
+        ref = float(r["referral_fee"])
+        fba = float(r["fba_fee"])
+        share = rev / total_rev  # 고정비를 매출 비중으로 배분
+        rows += [
+            (date, "매출", "Principal", round(rev, 2)),
+            (date, "매출", "Shipping", round(rev * 0.04, 2)),
+            (date, "매출", "Tax", round(rev * 0.11, 2)),
+            (date, "수수료", "Commission(판매수수료)", -round(ref, 2)),
+            (date, "수수료", "FBAPerUnitFulfillmentFee", -round(fba, 2)),
+            (date, "수수료", "FixedClosingFee", -round(rev * 0.01, 2)),
+            (date, "프로모션", "Promotion(할인)", -round(rev * 0.03, 2)),
+            (date, "환불", "RefundedPrincipal", -round(rev * 0.02, 2)),
+            (date, "광고", "Sponsored Products(광고비)", -round(rev * 0.12, 2)),
+            (date, "서비스 수수료", "FBAStorageFee(보관료)", -round(12.50 * share, 2)),
+            (date, "서비스 수수료", "Subscription(월구독료)", -round(39.99 * share, 2)),
+        ]
+    return pd.DataFrame(rows, columns=cols)
 
 
 def ads(days: int = 90) -> dict:

@@ -462,12 +462,22 @@ def finance_breakdown(settings: Settings, days: int = 90) -> pd.DataFrame:
     client = Finances(credentials=_credentials(settings), marketplace=_marketplace(settings))
     posted_after = _iso(datetime.now(timezone.utc) - timedelta(days=days))
 
-    agg: dict[tuple[str, str], float] = {}
+    # (날짜, 구분, 항목) 별로 집계 → 짧은 기간은 날짜로 잘라 재사용할 수 있다.
+    agg: dict[tuple[str, str, str], float] = {}
 
-    def add(group: str, name: str, amount: float):
+    def _day(ev: dict, field: str = "PostedDate") -> str:
+        posted = ev.get(field)
+        if not posted:
+            return ""
+        try:
+            return pd.to_datetime(posted).date().isoformat()
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def add(date: str, group: str, name: str, amount: float):
         if not amount:
             return
-        key = (group, name or "기타")
+        key = (date, group, name or "기타")
         agg[key] = agg.get(key, 0.0) + amount
 
     next_token: str | None = None
@@ -480,37 +490,42 @@ def finance_breakdown(settings: Settings, days: int = 90) -> pd.DataFrame:
 
         # 출고(판매) 이벤트
         for e in ev.get("ShipmentEventList", []):
+            d = _day(e)
             for it in e.get("ShipmentItemList", []):
                 for c in it.get("ItemChargeList", []):
-                    add("매출", c.get("ChargeType", "Charge"), _amount(c))
+                    add(d, "매출", c.get("ChargeType", "Charge"), _amount(c))
                 for f in it.get("ItemFeeList", []):
-                    add("수수료", f.get("FeeType", "Fee"), _amount(f))
+                    add(d, "수수료", f.get("FeeType", "Fee"), _amount(f))
                 for p in it.get("PromotionList", []):
-                    add("프로모션", p.get("PromotionType", "Promotion"), _amount(p))
+                    add(d, "프로모션", p.get("PromotionType", "Promotion"), _amount(p))
 
         # 환불 이벤트
         for e in ev.get("RefundEventList", []):
+            d = _day(e)
             for it in e.get("ShipmentItemAdjustmentList", []):
                 for c in it.get("ItemChargeAdjustmentList", []):
-                    add("환불", c.get("ChargeType", "Refund"), _amount(c))
+                    add(d, "환불", c.get("ChargeType", "Refund"), _amount(c))
                 for f in it.get("ItemFeeAdjustmentList", []):
-                    add("환불 수수료", f.get("FeeType", "Fee"), _amount(f))
+                    add(d, "환불 수수료", f.get("FeeType", "Fee"), _amount(f))
                 for p in it.get("PromotionAdjustmentList", []):
-                    add("환불 프로모션", p.get("PromotionType", "Promotion"), _amount(p))
+                    add(d, "환불 프로모션", p.get("PromotionType", "Promotion"), _amount(p))
 
         # 서비스 수수료(보관료, 광고비 등)
         for e in ev.get("ServiceFeeEventList", []):
+            d = _day(e)
             for f in e.get("FeeList", []):
-                add("서비스 수수료", f.get("FeeType", "Fee"), _amount(f))
+                add(d, "서비스 수수료", f.get("FeeType", "Fee"), _amount(f))
 
         # 조정(Adjustment)
         for e in ev.get("AdjustmentEventList", []):
+            d = _day(e)
             atype = e.get("AdjustmentType", "Adjustment")
-            add("조정", atype, _amount({"Amount": e.get("AdjustmentAmount")}))
+            add(d, "조정", atype, _amount({"Amount": e.get("AdjustmentAmount")}))
 
         # 광고비(Sponsored Products 등 — 잔액에서 차감되는 경우 여기 잡힘)
         for e in ev.get("ProductAdsPaymentEventList", []):
-            add("광고", e.get("transactionType", "Sponsored Products"),
+            d = _day(e, "postedDate")
+            add(d, "광고", e.get("transactionType", "Sponsored Products"),
                 _amount({"Amount": e.get("transactionValue")}))
 
         next_token = (resp.payload or {}).get("NextToken")
@@ -518,7 +533,7 @@ def finance_breakdown(settings: Settings, days: int = 90) -> pd.DataFrame:
             break
 
     rows = [
-        {"구분": g, "항목": n, "금액": round(v, 2)}
-        for (g, n), v in sorted(agg.items())
+        {"날짜": (pd.to_datetime(dt) if dt else pd.NaT), "구분": g, "항목": n, "금액": round(v, 2)}
+        for (dt, g, n), v in sorted(agg.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2]))
     ]
-    return pd.DataFrame(rows, columns=["구분", "항목", "금액"])
+    return pd.DataFrame(rows, columns=["날짜", "구분", "항목", "금액"])

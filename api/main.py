@@ -285,6 +285,53 @@ def _inventory_cached(settings):
         return inv
 
 
+# 정산(finances)·상세(breakdown)는 넓은 기간으로 한 번만 받아 캐시하고,
+# 짧은 기간(7·14·60일)은 날짜로 '잘라서' 재사용한다 → API 재호출 없이 즉시.
+_fin_raw: dict[int, tuple] = {}     # fetch_window -> (ts, fin, fin_err, bd, bd_err)
+_fin_lock = threading.Lock()
+
+
+def _fin_fetch_window(days: int) -> int:
+    """그 기간을 덮는 실제 패칭 기간. 30 이하는 30, 90 이하는 90 으로 묶는다."""
+    if days <= 30:
+        return 30
+    if days <= 90:
+        return 90
+    return days
+
+
+def _finance_raw(settings, days: int):
+    """fetch_window 단위로 정산/상세를 한 번만 받아 캐시. (fin, fin_err, bd, bd_err)."""
+    fw = _fin_fetch_window(days)
+    now = time.time()
+    hit = _fin_raw.get(fw)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return hit[1:]
+    with _fin_lock:
+        hit = _fin_raw.get(fw)
+        if hit and time.time() - hit[0] < _CACHE_TTL:
+            return hit[1:]
+        fin, fin_err = _section(lambda: repository.get_finances(settings, fw))
+        bd, bd_err = _section(lambda: repository.get_finance_breakdown(settings, fw))
+        _fin_raw[fw] = (time.time(), fin, fin_err, bd, bd_err)
+        return fin, fin_err, bd, bd_err
+
+
+def _slice_finance(finances, breakdown, days: int):
+    """넓게 받아둔 정산/상세를 요청 기간으로 자른다. breakdown 은 (구분,항목) 으로 재집계."""
+    cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
+    if finances is not None and not finances.empty and "date" in finances.columns:
+        d = pd.to_datetime(finances["date"], errors="coerce")
+        finances = finances[d >= cutoff].reset_index(drop=True)
+    if breakdown is not None and not breakdown.empty and "날짜" in breakdown.columns:
+        d = pd.to_datetime(breakdown["날짜"], errors="coerce")
+        breakdown = breakdown[(d >= cutoff) | d.isna()]
+    if breakdown is not None and not breakdown.empty:
+        # 날짜 차원을 접어 (구분,항목) 단위로 합산 → 이후 코드/프론트 계약 유지
+        breakdown = (breakdown.groupby(["구분", "항목"], as_index=False)["금액"].sum())
+    return finances, breakdown
+
+
 def _build_dashboard(days: int):
     settings = load_settings()
 
@@ -297,13 +344,13 @@ def _build_dashboard(days: int):
 
     with ThreadPoolExecutor(max_workers=4) as ex:
         f_si = ex.submit(_orders_then_inventory)
-        f_fin = ex.submit(_section, lambda: repository.get_finances(settings, days))
-        f_bd = ex.submit(_section, lambda: repository.get_finance_breakdown(settings, days))
+        f_fin = ex.submit(_finance_raw, settings, days)  # 넓은 기간 캐시 → 잘라 씀
         f_ads = ex.submit(_section, lambda: repository.get_ads(settings, days))
         (orders, orders_err), (inventory, inv_err) = f_si.result()
-        finances, fin_err = f_fin.result()
-        breakdown, bd_err = f_bd.result()
+        finances, fin_err, breakdown, bd_err = f_fin.result()
         ads_data, ads_err = f_ads.result()
+
+    finances, breakdown = _slice_finance(finances, breakdown, days)
 
     if orders is None:
         orders = pd.DataFrame(
