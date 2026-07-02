@@ -1,11 +1,12 @@
 name: Prewarm backend
 
-# 30분마다 백엔드를 깨우고 모든 기간을 재빌드해 Firestore 캐시를 갱신한다.
+# 매시간 백엔드를 깨우고 모든 기간을 재빌드해 Firestore 캐시를 갱신한다.
 # 사용자는 항상 Firestore 에 저장된 최신 빌드를 즉시(1초 이내) 받는다 —
-# 무거운 SP-API 리포트 빌드는 이 크론(refresh=1)에서만 일어난다.
+# 무거운 SP-API 리포트 빌드는 이 크론(refresh=1)에서만 일어나며, 매시간
+# 주기라 Cloud Run 컴퓨팅이 무료 한도 안에 머문다. (데이터는 최대 1시간 지연)
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "0 * * * *"
   workflow_dispatch: {}
 
 jobs:
