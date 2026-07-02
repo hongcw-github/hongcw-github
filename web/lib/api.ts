@@ -32,6 +32,18 @@ export async function fetchDashboard(days: number, refresh = false): Promise<Das
   return res.json();
 }
 
+// 연도별/전체 히스토리 (Firestore 백필 원본으로 조립 — 응답 형태는 대시보드와 동일)
+export async function fetchHistory(range: string, refresh = false): Promise<DashboardData> {
+  const url = `${BASE}/api/history?range=${encodeURIComponent(range)}${refresh ? "&refresh=1" : ""}`;
+  const res = await fetch(url, {
+    cache: "no-store",
+    headers: { "X-Dashboard-Key": getKey() },
+  });
+  if (res.status === 401) throw new UnauthorizedError();
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return res.json();
+}
+
 export const fmtUSD = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 

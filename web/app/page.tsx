@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import useSWR, { preload } from "swr";
 
 const WINDOWS = [7, 14, 30, 60, 90];
-import { fetchDashboard, fmtNum, fmtUSD, setKey, UnauthorizedError } from "@/lib/api";
+import { fetchDashboard, fetchHistory, fmtNum, fmtUSD, setKey, UnauthorizedError } from "@/lib/api";
 import { loadCosts, saveCosts, type CostMap } from "@/lib/costs";
 import type { DashboardData } from "@/lib/types";
 import { Metric } from "@/components/ui";
@@ -23,8 +23,12 @@ const TABS = [
 ] as const;
 
 export default function Page() {
-  const [days, setDays] = useState(30);
+  // 선택값: 롤링 기간("7".."90") 또는 히스토리("2026"/"2025"/"2024"/"all")
+  const [sel, setSel] = useState("30");
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("sales");
+  const isHistory = !WINDOWS.map(String).includes(sel);
+  const daysNum = isHistory ? (sel === "all" ? 730 : 365) : Number(sel);
+  const viewLabel = isHistory ? (sel === "all" ? "전체 기간" : `${sel}년`) : `최근 ${sel}일`;
   const [pw, setPw] = useState("");
   const [costs, setCostsState] = useState<CostMap>(() => loadCosts());
 
@@ -35,8 +39,8 @@ export default function Page() {
   };
 
   const { data, error, isLoading, mutate } = useSWR<DashboardData>(
-    ["dashboard", days],
-    () => fetchDashboard(days),
+    ["view", sel],
+    () => (isHistory ? fetchHistory(sel) : fetchDashboard(Number(sel))),
     {
       revalidateOnFocus: false,
       shouldRetryOnError: false,
@@ -54,10 +58,10 @@ export default function Page() {
   //  쏴서 데워야 빌드가 끝난다. 그러면 기간을 바꿔도 캐시돼 있어 즉시 뜬다.)
   useEffect(() => {
     if (!hasData) return;
-    WINDOWS.filter((d) => d !== days).forEach((d) => {
-      preload(["dashboard", d], () => fetchDashboard(d));
+    WINDOWS.filter((d) => String(d) !== sel).forEach((d) => {
+      preload(["view", String(d)], () => fetchDashboard(d));
     });
-  }, [hasData, days]);
+  }, [hasData, sel]);
 
   // 입력한 원가로 진짜 순이익 계산 (KPI·정산·광고 탭이 공유)
   const cogs = hasData ? data!.sales.by_sku.reduce((s, r) => s + (costs[r.sku] || 0) * r.units, 0) : 0;
@@ -116,18 +120,30 @@ export default function Page() {
         </div>
         <div className="flex items-center gap-3">
           <select
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
+            value={sel}
+            onChange={(e) => setSel(e.target.value)}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
           >
-            {[7, 14, 30, 60, 90].map((d) => (
-              <option key={d} value={d}>
-                최근 {d}일
-              </option>
-            ))}
+            <optgroup label="최근">
+              {[7, 14, 30, 60, 90].map((d) => (
+                <option key={d} value={String(d)}>
+                  최근 {d}일
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="연도별">
+              <option value="2026">2026년</option>
+              <option value="2025">2025년</option>
+              <option value="2024">2024년</option>
+              <option value="all">전체 기간</option>
+            </optgroup>
           </select>
           <button
-            onClick={() => mutate(fetchDashboard(days, true), { revalidate: false })}
+            onClick={() =>
+              mutate(isHistory ? fetchHistory(sel, true) : fetchDashboard(Number(sel), true), {
+                revalidate: false,
+              })
+            }
             className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
           >
             새로고침
@@ -166,7 +182,7 @@ export default function Page() {
       {preparing && (
         <div className="py-20 text-center text-slate-400">
           <div className="mb-2 text-base">⏳ 데이터를 준비하는 중입니다…</div>
-          <div className="text-xs">최근 {days}일 리포트를 불러오는 중이에요. 처음이면 1~2분 걸릴 수 있어요.</div>
+          <div className="text-xs">{viewLabel} 데이터를 불러오는 중이에요. 처음이면 1~2분 걸릴 수 있어요.</div>
         </div>
       )}
       {error && (
@@ -194,7 +210,7 @@ export default function Page() {
               ads={data!.ads}
               trueProfit={trueProfit}
               salesDaily={data!.sales.daily}
-              days={data!.days}
+              days={daysNum}
             />
           )}
         </>

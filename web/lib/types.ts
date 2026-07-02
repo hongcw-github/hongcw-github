@@ -9,7 +9,8 @@ export interface DashboardData {
   cached?: boolean;
   mode: "mock" | "live";
   marketplace: string;
-  days: number;
+  days: number | string;
+  range?: string;
   kpis: {
     revenue: number;
     net_profit: number;
