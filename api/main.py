@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src import firestore_cache  # noqa: E402
 from src import repository  # noqa: E402
 from src.config import load_settings  # noqa: E402
 from src.costs import load_costs  # noqa: E402
@@ -53,6 +54,9 @@ def _section(loader):
 # ── 간단한 인메모리 캐시 (무거운 리포트 생성을 매 요청마다 반복하지 않도록) ──
 # 세일즈가 잦지 않으므로 기본 2시간. (예열 크론이 만료 전 미리 갱신해 둠)
 _CACHE_TTL = int(os.getenv("CACHE_TTL_MINUTES", "120")) * 60
+# Firestore 에서 채워온 항목은 짧게만 신선 취급 → 인스턴스들이 크론이 갱신한
+# 최신 Firestore 데이터를 자주(기본 5분) 다시 읽어오게 한다 (읽기는 싸고 빠름).
+_FS_WARM_TTL = int(os.getenv("FS_WARM_TTL_SECONDS", "300"))
 _cache: dict[int, tuple[float, dict]] = {}
 
 _TZ = {"CA": "America/Toronto", "US": "America/Los_Angeles", "MX": "America/Mexico_City",
@@ -245,6 +249,14 @@ def dashboard(
     if hit and not refresh and (now - hit[0] < hit[2]):
         return {**hit[1], "cached": True}
 
+    # 인메모리 미스(콜드 인스턴스 등) → Firestore 의 마지막 성공 빌드를 즉시 서빙.
+    # 무거운 재빌드는 예열 크론(refresh=1)만 수행하므로 사용자는 기다리지 않는다.
+    if not refresh:
+        fs = firestore_cache.load_dashboard(days)
+        if fs is not None:
+            _cache[days] = (now, fs["payload"], _FS_WARM_TTL)
+            return {**fs["payload"], "cached": True}
+
     # 캐시 없음/만료 → 요청 안에서 동기 빌드.
     # (Cloud Run 은 '요청 처리 중'에만 CPU 를 할당하므로 백그라운드 스레드는
     #  요청 사이에 굶어죽어 빌드가 끝나지 않는다 → 반드시 요청 안에서 만든다.
@@ -260,6 +272,8 @@ def _store(days: int, payload: dict) -> dict:
     has_err = any(payload[s].get("error") for s in ("sales", "inventory", "finance"))
     ttl = 120 if has_err else _CACHE_TTL
     _cache[days] = (time.time(), payload, ttl)
+    if not has_err:
+        firestore_cache.save_dashboard(days, payload)  # 성공한 빌드만 영구 저장
     return payload
 
 

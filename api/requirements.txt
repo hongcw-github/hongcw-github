@@ -5,3 +5,4 @@ pandas>=2.2
 python-dotenv>=1.0
 python-amazon-sp-api>=1.9
 requests>=2.31
+google-cloud-firestore>=2.16
