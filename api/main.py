@@ -346,7 +346,7 @@ def _slice_finance(finances, breakdown, days: int):
     return finances, breakdown
 
 
-def _build_dashboard(days: int):
+def _fetch_live(days: int):
     settings = load_settings()
 
     # 리포트(createReport) 기반인 orders·inventory 를 동시에 부르면 throttle 되므로
@@ -365,6 +365,28 @@ def _build_dashboard(days: int):
         ads_data, ads_err = f_ads.result()
 
     finances, breakdown = _slice_finance(finances, breakdown, days)
+    errors = {"orders": orders_err, "inv": inv_err, "fin": fin_err, "bd": bd_err, "ads": ads_err}
+    return settings, orders, inventory, finances, breakdown, ads_data, errors
+
+
+def _build_dashboard(days: int):
+    settings, orders, inventory, finances, breakdown, ads_data, errors = _fetch_live(days)
+    start = pd.Timestamp.now() - pd.Timedelta(days=days)
+    return _assemble_dashboard(
+        orders, inventory, finances, breakdown, ads_data, settings,
+        label=days, window_start=start, window_end=None, errors=errors,
+    )
+
+
+def _assemble_dashboard(orders, inventory, finances, breakdown, ads_data, settings,
+                        *, label, window_start=None, window_end=None, errors=None):
+    """수집된 데이터로 대시보드 payload 를 조립한다. live/history 공용."""
+    errors = errors or {}
+    orders_err = errors.get("orders")
+    inv_err = errors.get("inv")
+    fin_err = errors.get("fin")
+    bd_err = errors.get("bd")
+    ads_err = errors.get("ads")
 
     if orders is None:
         orders = pd.DataFrame(
@@ -375,8 +397,10 @@ def _build_dashboard(days: int):
         )
     if "purchase_date" in orders.columns:
         orders["purchase_date"] = pd.to_datetime(orders["purchase_date"], errors="coerce")
-    if not orders.empty:
-        orders = orders[orders["purchase_date"] >= (pd.Timestamp.now() - pd.Timedelta(days=days))]
+    if not orders.empty and window_start is not None:
+        orders = orders[orders["purchase_date"] >= window_start]
+    if not orders.empty and window_end is not None:
+        orders = orders[orders["purchase_date"] < window_end]
 
     shipped = orders[orders["order_status"] == "Shipped"] if not orders.empty else orders
 
@@ -467,7 +491,7 @@ def _build_dashboard(days: int):
     return {
         "mode": "mock" if settings.use_mock else "live",
         "marketplace": settings.marketplace,
-        "days": days,
+        "days": label,
         "kpis": {
             "revenue": round(revenue, 2),
             "net_profit": round(net_profit, 2),
@@ -501,3 +525,62 @@ def _build_dashboard(days: int):
             "error": ads_err,
         },
     }
+
+
+# ── 히스토리(연도별/전체): Firestore 에 백필된 원본으로 조립 (SP-API 미호출) ──
+_history_cache: dict[str, tuple[float, dict]] = {}
+_HIST_TTL = int(os.getenv("HISTORY_TTL_SECONDS", "1800"))  # 30분
+
+
+def _range_months(range_key: str):
+    """(yms, window_start, window_end). range_key: 'all' 또는 연도 문자열('2024')."""
+    if range_key == "all":
+        now = pd.Timestamp.now()
+        start = now - pd.Timedelta(days=760)
+        yms = pd.period_range(start=start, end=now, freq="M").strftime("%Y-%m").tolist()
+        return yms, None, None
+    year = int(range_key)
+    yms = [f"{year}-{m:02d}" for m in range(1, 13)]
+    return yms, pd.Timestamp(year=year, month=1, day=1), pd.Timestamp(year=year + 1, month=1, day=1)
+
+
+def _build_history(range_key: str) -> dict:
+    settings = load_settings()
+    yms, wstart, wend = _range_months(range_key)
+
+    orders = pd.DataFrame(firestore_cache.load_raw_months("raw_orders", yms))
+    breakdown = pd.DataFrame(firestore_cache.load_raw_months("raw_finance_breakdown", yms))
+    finances = pd.DataFrame(firestore_cache.load_raw_months("raw_finance_daily", yms))
+    inventory = pd.DataFrame(firestore_cache.load_raw_inventory())
+
+    if not finances.empty and "date" in finances.columns:
+        finances["date"] = pd.to_datetime(finances["date"], errors="coerce")
+    if not breakdown.empty and "날짜" in breakdown.columns:
+        breakdown = breakdown.groupby(["구분", "항목"], as_index=False)["금액"].sum()
+
+    payload = _assemble_dashboard(
+        orders, inventory, finances, breakdown, None, settings,
+        label=range_key, window_start=wstart, window_end=wend, errors=None,
+    )
+    payload["range"] = range_key
+    return payload
+
+
+@app.get("/api/history")
+def history(
+    range: str = Query("all"),
+    refresh: bool = False,
+    key: str | None = Query(None),
+    x_dashboard_key: str | None = Header(None),
+):
+    if _DASHBOARD_PASSWORD:
+        if (x_dashboard_key or key) != _DASHBOARD_PASSWORD:
+            raise HTTPException(status_code=401, detail="unauthorized")
+
+    now = time.time()
+    hit = _history_cache.get(range)
+    if hit and not refresh and now - hit[0] < _HIST_TTL:
+        return {**hit[1], "cached": True}
+    payload = _build_history(range)
+    _history_cache[range] = (now, payload)
+    return payload

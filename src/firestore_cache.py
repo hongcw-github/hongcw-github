@@ -56,6 +56,39 @@ def load_dashboard(days: int):
         return None
 
 
+def load_raw_months(collection: str, yms: list) -> list:
+    """여러 월 문서(raw_orders 등)의 rows_json 을 합쳐 하나의 리스트로 반환."""
+    db = _db()
+    if db is None:
+        return []
+    out: list = []
+    for ym in yms:
+        try:
+            snap = db.collection(collection).document(str(ym)).get()
+            if snap.exists:
+                raw = (snap.to_dict() or {}).get("rows_json")
+                if raw:
+                    out.extend(json.loads(raw))
+        except Exception as e:  # noqa: BLE001
+            print(f"[firestore_cache] load_raw {collection}/{ym} failed ({e})")
+    return out
+
+
+def load_raw_inventory() -> list:
+    db = _db()
+    if db is None:
+        return []
+    try:
+        snap = db.collection("raw_inventory").document("current").get()
+        if snap.exists:
+            raw = (snap.to_dict() or {}).get("rows_json")
+            if raw:
+                return json.loads(raw)
+    except Exception as e:  # noqa: BLE001
+        print(f"[firestore_cache] load_raw_inventory failed ({e})")
+    return []
+
+
 def save_dashboard(days: int, payload: dict) -> None:
     db = _db()
     if db is None:
