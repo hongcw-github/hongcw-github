@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR, { preload } from "swr";
 
-const WINDOWS = [7, 14, 30, 60, 90];
+const WINDOWS = [7, 14, 30, 60, 90, 180];
 import { fetchDashboard, fetchHistory, fmtNum, fmtUSD, setKey, UnauthorizedError } from "@/lib/api";
 import { loadCosts, saveCosts, type CostMap } from "@/lib/costs";
 import type { DashboardData } from "@/lib/types";

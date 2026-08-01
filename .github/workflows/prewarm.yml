@@ -20,7 +20,7 @@ jobs:
         run: |
           curl -s -m 120 "$BASE/api/health" -o /dev/null || true
           # refresh=1 로 강제 재빌드 → 각 기간의 최신 결과를 Firestore 에 저장.
-          for d in 30 60 90 14 7; do
+          for d in 30 60 90 180 14 7; do
             curl -s -m 300 "$BASE/api/dashboard?days=$d&refresh=1" -o /dev/null || true
           done
           echo "prewarm done"
