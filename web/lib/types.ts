@@ -7,6 +7,20 @@ export interface DashboardData {
   building?: boolean;
   stale?: boolean;
   cached?: boolean;
+  currency?: string;
+  currency_source?: string;
+  metadata?: {
+    generated_at?: string | null;
+    served_at?: string | null;
+    cache_saved_at?: string | null;
+    cache_source?: string;
+    assembled_at?: string | null;
+    latest_order_date?: string | null;
+    latest_settlement_date?: string | null;
+    inventory_fetched_at?: string | null;
+    finance_fetched_at?: string | null;
+    source_updated_at?: string | null;
+  };
   mode: "mock" | "live";
   marketplace: string;
   days: number | string;
@@ -20,7 +34,12 @@ export interface DashboardData {
   };
   sales: {
     daily: { date: string; revenue: number; units: number }[];
-    by_sku: { sku: string; product_name: string; revenue: number; units: number }[];
+    by_sku: {
+      sku: string;
+      product_name: string;
+      revenue: number;
+      units: number;
+    }[];
     status: { status: string; count: number }[];
     error: ApiError | null;
   };
@@ -29,7 +48,11 @@ export interface DashboardData {
     by_weekday?: { weekday: number; revenue: number }[];
     by_hour?: { hour: number; revenue: number }[];
     by_state?: { ship_state: string; revenue: number; units: number }[];
-    promo?: { total_discount: number; discounted_share: number; discounted_revenue: number };
+    promo?: {
+      total_discount: number;
+      discounted_share: number;
+      discounted_revenue: number;
+    };
     cancel?: { rate: number; canceled: number; total: number };
     weekly?: { week: string; revenue: number }[];
     tz?: string;

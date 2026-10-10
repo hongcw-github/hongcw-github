@@ -5,8 +5,10 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -19,13 +21,18 @@ import type { CostMap } from "@/lib/costs";
 import { Card, ErrorBanner, Metric } from "./ui";
 
 const GROUP_COLOR: Record<string, string> = {
-  매출: "#22c55e",
-  수수료: "#ef4444",
-  프로모션: "#f59e0b",
-  환불: "#a855f7",
-  "환불 수수료": "#ec4899",
-  "서비스 수수료": "#0ea5e9",
-  조정: "#64748b",
+  매출: "#147d73",
+  수수료: "#dc8b53",
+  프로모션: "#e6b887",
+  환불: "#b18175",
+  "환불 수수료": "#c99c8c",
+  "서비스 수수료": "#87aaa5",
+  조정: "#8b9792",
+};
+const tooltipStyle = {
+  borderRadius: 14,
+  border: "1px solid #e6ece9",
+  fontSize: 12,
 };
 
 export default function FinanceTab({
@@ -34,161 +41,342 @@ export default function FinanceTab({
   bySku,
   costs,
   onCostChange,
+  revenue,
+  currency = "CAD",
+  salesAvailable = true,
 }: {
   finance: DashboardData["finance"];
   profit: DashboardData["profit"];
   bySku: DashboardData["sales"]["by_sku"];
   costs: CostMap;
   onCostChange: (sku: string, value: number) => void;
+  revenue?: number;
+  currency?: string;
+  salesAvailable?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
-
   if (finance.error) return <ErrorBanner label="정산" error={finance.error} />;
   if (finance.daily.length === 0 && finance.breakdown.length === 0)
     return <Card>정산 데이터가 없습니다.</Card>;
 
-  const bd = [...finance.breakdown].sort((a, b) => a.amount - b.amount);
-
-  // 원가는 화면에서 입력한 값으로 클라이언트에서 계산
-  const cogs = bySku.reduce((s, r) => s + (costs[r.sku] || 0) * r.units, 0);
-  const trueProfit = profit.amazon_net - cogs;
-  const margin = profit.amazon_net ? (trueProfit / profit.amazon_net) * 100 : 0;
-  const filled = bySku.filter((r) => costs[r.sku]).length;
-
-  const updateCost = (sku: string, v: string) => onCostChange(sku, parseFloat(v) || 0);
+  const hasCost = (sku: string) =>
+    Object.prototype.hasOwnProperty.call(costs, sku) &&
+    Number.isFinite(costs[sku]) &&
+    costs[sku] >= 0;
+  const cogs = bySku.reduce(
+    (sum, row) => sum + (hasCost(row.sku) ? costs[row.sku] : 0) * row.units,
+    0,
+  );
+  const estimate = profit.amazon_net - cogs;
+  const margin =
+    revenue !== undefined && revenue > 0 ? (estimate / revenue) * 100 : null;
+  const selling = bySku.filter((row) => row.units > 0);
+  const filled = selling.filter((row) => hasCost(row.sku)).length;
+  const units = selling.reduce((sum, row) => sum + row.units, 0);
+  const coveredUnits = selling.reduce(
+    (sum, row) => sum + (hasCost(row.sku) ? row.units : 0),
+    0,
+  );
+  const coverage = units > 0 ? (coveredUnits / units) * 100 : null;
+  const incomplete = filled < selling.length;
+  const groups = new Map<string, number>();
+  finance.breakdown.forEach((row) =>
+    groups.set(row.group, (groups.get(row.group) ?? 0) + row.amount),
+  );
+  const grouped = [...groups]
+    .map(([group, amount]) => ({ group, amount }))
+    .sort((a, b) => b.amount - a.amount);
+  const updateCost = (sku: string, value: string) => {
+    if (value.trim() === "") {
+      onCostChange(sku, Number.NaN);
+      return;
+    }
+    const number = Number(value);
+    if (Number.isFinite(number) && number >= 0) onCostChange(sku, number);
+  };
 
   return (
     <div className="grid grid-cols-1 gap-5">
-      {/* 진짜 순이익 */}
-      <Card title="🏆 진짜 순이익 (상품원가 반영)">
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <Metric label="아마존 정산순액" value={fmtUSD(profit.amazon_net)} />
-          <Metric label="상품원가(COGS)" value={`- ${fmtUSD(cogs)}`} />
-          <Metric label="진짜 순이익" value={fmtUSD(trueProfit)} accent />
-          <Metric label="순이익률" value={`${margin.toFixed(1)}%`} />
-        </div>
-        <div className="mt-3 flex items-center justify-between">
-          <p className="text-xs text-slate-400">
-            아마존 정산순액(모든 수수료·환불·보관료 반영) − 상품원가 = 진짜 순이익.
-            {filled === 0 && " ⚠️ 원가 미입력 → COGS=0. 아래 버튼으로 SKU별 원가를 넣으세요."}
-            {" "}제외: {profit.excludes.join(", ")}.
+      <Card title="정산 기준 이익 추정">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-slate-500">
+            정산순액에서 입력한 상품원가를 차감한 참고값입니다.
           </p>
           <button
-            onClick={() => setEditing((v) => !v)}
-            className="ml-3 shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-50"
+            disabled={!salesAvailable}
+            onClick={() => setEditing((value) => !value)}
+            className="rounded-full border border-[#cce1da] bg-[#f2f8f5] px-4 py-2 text-xs font-semibold text-[#147d73] transition hover:bg-[#e4f1ec]"
           >
-            {editing ? "닫기" : "원가 입력"}
+            {editing ? "원가 입력 닫기" : "SKU 원가 입력"}
           </button>
         </div>
-
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Metric label="아마존 정산순액" value={fmtUSD(profit.amazon_net)} />
+          <Metric
+            label="입력한 상품원가"
+            value={salesAvailable ? fmtUSD(cogs) : "—"}
+          />
+          <Metric
+            label={
+              incomplete ? "이익 추정 · 원가 일부 누락" : "원가 차감 후 정산액"
+            }
+            value={salesAvailable ? fmtUSD(estimate) : "—"}
+            accent
+          />
+          <Metric
+            label="주문매출 대비 비율 · 참고"
+            value={
+              !salesAvailable || margin === null ? "—" : `${margin.toFixed(1)}%`
+            }
+          />
+        </div>
+        <div className="mt-5 rounded-2xl bg-[#f6f8f6] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <span className="font-medium text-slate-600">
+              {salesAvailable
+                ? `원가 입력 현황 · 판매 SKU ${filled} / ${selling.length}개`
+                : "주문 조회 실패 · 원가 기반 수익은 계산하지 않습니다"}
+            </span>
+            <span className="text-[#147d73]">
+              판매수량 기준 커버리지{" "}
+              {coverage === null ? "—" : `${coverage.toFixed(1)}%`}
+            </span>
+          </div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#e1e8e4]">
+            <div
+              className="h-full rounded-full bg-[#147d73]"
+              style={{ width: `${coverage ?? 0}%` }}
+            />
+          </div>
+          <p className="mt-3 text-xs leading-5 text-slate-500">
+            {incomplete &&
+              "원가가 없는 SKU는 0으로 계산되어 이익이 높게 표시될 수 있습니다. "}
+            정산일과 주문일의 집계 시점이 달라 이 비율은 회계상 순이익률과
+            다릅니다.{" "}
+            {profit.excludes.length > 0 &&
+              `추정에서 제외: ${profit.excludes.join(", ")}.`}
+          </p>
+        </div>
         {editing && (
-          <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
-            <table className="w-full text-sm">
+          <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-100">
+            <table className="w-full min-w-[580px] text-sm">
               <thead>
-                <tr className="border-b bg-slate-50 text-left text-slate-500">
-                  <th className="px-3 py-2">SKU</th>
-                  <th className="px-3 py-2">상품명</th>
-                  <th className="px-3 py-2 text-right">판매수량</th>
-                  <th className="px-3 py-2 text-right">1개당 원가($)</th>
-                  <th className="px-3 py-2 text-right">원가 합계</th>
+                <tr className="border-b border-slate-100 bg-[#f8faf8] text-left text-xs text-slate-400">
+                  <th className="px-4 py-3 font-medium">상품 / SKU</th>
+                  <th className="px-4 py-3 text-right font-medium">판매수량</th>
+                  <th className="px-4 py-3 text-right font-medium">
+                    개당 원가 ({currency})
+                  </th>
+                  <th className="px-4 py-3 text-right font-medium">
+                    원가 합계
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {bySku.map((r) => (
-                  <tr key={r.sku} className="border-b last:border-0">
-                    <td className="px-3 py-2 font-medium">{r.sku}</td>
-                    <td className="px-3 py-2 text-slate-500" title={r.product_name}>
-                      {r.product_name.length > 30 ? r.product_name.slice(0, 29) + "…" : r.product_name}
+                {bySku.map((row) => (
+                  <tr
+                    key={row.sku}
+                    className="border-b border-slate-100 last:border-0"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="text-slate-700" title={row.product_name}>
+                        {row.product_name.length > 35
+                          ? row.product_name.slice(0, 34) + "…"
+                          : row.product_name}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        {row.sku}
+                      </div>
                     </td>
-                    <td className="px-3 py-2 text-right">{r.units}</td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-4 py-3 text-right text-slate-500">
+                      {row.units.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right">
                       <input
                         type="number"
                         step="0.01"
                         min="0"
-                        value={costs[r.sku] ?? ""}
-                        onChange={(e) => updateCost(r.sku, e.target.value)}
-                        placeholder="0.00"
-                        className="w-24 rounded border border-slate-300 px-2 py-1 text-right"
+                        aria-label={`${row.sku} 개당 원가 ${currency}`}
+                        value={costs[row.sku] ?? ""}
+                        onChange={(event) =>
+                          updateCost(row.sku, event.target.value)
+                        }
+                        placeholder="미입력"
+                        className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-right text-slate-700 outline-none focus:border-[#147d73] focus:ring-2 focus:ring-[#147d73]/10"
                       />
                     </td>
-                    <td className="px-3 py-2 text-right text-slate-600">
-                      {fmtUSD((costs[r.sku] || 0) * r.units)}
+                    <td className="px-4 py-3 text-right text-slate-600">
+                      {hasCost(row.sku)
+                        ? fmtUSD(costs[row.sku] * row.units)
+                        : "—"}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="px-3 py-2 text-xs text-slate-400">
-              입력값은 이 브라우저에 저장됩니다. (기기/브라우저가 바뀌면 다시 입력)
+            <p className="border-t border-slate-100 px-4 py-3 text-xs text-slate-400">
+              입력값은 이 브라우저에 저장됩니다. 다른 기기나 브라우저에는
+              공유되지 않습니다.
             </p>
           </div>
         )}
       </Card>
-
-      <Card title="매출 vs 순수익 추이">
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={finance.daily} margin={{ left: 8, right: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={24} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(v: number) => fmtUSD(v)} />
-            <Line type="monotone" dataKey="revenue" name="매출" stroke="#2563eb" dot={false} strokeWidth={2} />
-            <Line type="monotone" dataKey="net_profit" name="순수익" stroke="#22c55e" dot={false} strokeWidth={2} />
-          </LineChart>
-        </ResponsiveContainer>
-      </Card>
-
-      <div className="grid grid-cols-3 gap-4">
-        <Metric label="총 수입" value={fmtUSD(finance.totals.income)} accent />
-        <Metric label="총 차감" value={fmtUSD(finance.totals.deductions)} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Metric
+          label="정산 수입"
+          value={fmtUSD(finance.totals.income)}
+          accent
+        />
+        <Metric label="정산 차감" value={fmtUSD(finance.totals.deductions)} />
         <Metric label="순 정산액" value={fmtUSD(finance.totals.net)} accent />
       </div>
-
-      <Card title="💸 항목별 금액 (수입 +, 차감 −)">
-        <ResponsiveContainer width="100%" height={Math.max(260, bd.length * 36)}>
-          <BarChart layout="vertical" data={bd} margin={{ left: 8, right: 16 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
-            <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-            <YAxis type="category" dataKey="type" width={180} tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(v: number) => fmtUSD(v)} />
-            <Bar dataKey="amount" name="금액" radius={[0, 4, 4, 0]}>
-              {bd.map((r, i) => (
-                <Cell key={i} fill={GROUP_COLOR[r.group] || "#94a3b8"} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </Card>
-
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <Card title="정산 수입 · 정산순액 추이">
+          <p className="mb-5 text-xs text-slate-500">
+            정산 발생일 기준 · 상품원가 차감 전
+          </p>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart
+              data={finance.daily}
+              margin={{ left: 0, right: 12, bottom: 5 }}
+            >
+              <CartesianGrid
+                vertical={false}
+                strokeDasharray="3 5"
+                stroke="#e9edeb"
+              />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(value) => String(value).slice(5)}
+                tick={{ fontSize: 11, fill: "#87938f" }}
+                minTickGap={28}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                tick={{ fontSize: 11, fill: "#87938f" }}
+                width={60}
+                tickFormatter={(value) => `$${value}`}
+                axisLine={false}
+                tickLine={false}
+              />
+              <Tooltip
+                formatter={(value) => fmtUSD(Number(value))}
+                contentStyle={tooltipStyle}
+              />
+              <Legend
+                iconType="circle"
+                iconSize={8}
+                wrapperStyle={{ fontSize: 12 }}
+              />
+              <ReferenceLine y={0} stroke="#cfd8d3" />
+              <Line
+                type="monotone"
+                dataKey="revenue"
+                name="정산 수입"
+                stroke="#8ebdb5"
+                dot={false}
+                strokeWidth={2}
+              />
+              <Line
+                type="monotone"
+                dataKey="net_profit"
+                name="정산순액"
+                stroke="#147d73"
+                dot={false}
+                strokeWidth={3}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </Card>
+        <Card title="정산 항목 구성">
+          <p className="mb-5 text-xs text-slate-500">
+            구분별 합계 · 수입 + / 차감 −
+          </p>
+          <ResponsiveContainer
+            width="100%"
+            height={Math.max(300, grouped.length * 36)}
+          >
+            <BarChart
+              layout="vertical"
+              data={grouped}
+              margin={{ left: 0, right: 24 }}
+              barSize={18}
+            >
+              <CartesianGrid
+                horizontal={false}
+                strokeDasharray="3 5"
+                stroke="#e9edeb"
+              />
+              <XAxis
+                type="number"
+                tick={{ fontSize: 11, fill: "#87938f" }}
+                tickFormatter={(value) => `$${value}`}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                type="category"
+                dataKey="group"
+                width={90}
+                tick={{ fontSize: 11, fill: "#64746e" }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <Tooltip
+                formatter={(value) => fmtUSD(Number(value))}
+                contentStyle={tooltipStyle}
+              />
+              <ReferenceLine x={0} stroke="#cfd8d3" />
+              <Bar dataKey="amount" name="금액" radius={5}>
+                {grouped.map((row) => (
+                  <Cell
+                    key={row.group}
+                    fill={
+                      GROUP_COLOR[row.group] ??
+                      (row.amount < 0 ? "#dc8b53" : "#147d73")
+                    }
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      </div>
       <Card title="전체 정산 항목 상세">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[480px] text-sm">
             <thead>
-              <tr className="border-b text-left text-slate-500">
-                <th className="py-2 pr-4">구분</th>
-                <th className="py-2 pr-4">항목</th>
-                <th className="py-2 text-right">금액</th>
+              <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
+                <th className="pb-3 pr-4 font-medium">구분</th>
+                <th className="pb-3 pr-4 font-medium">항목</th>
+                <th className="pb-3 text-right font-medium">
+                  금액 ({currency})
+                </th>
               </tr>
             </thead>
             <tbody>
-              {finance.breakdown.map((r, i) => (
-                <tr key={i} className="border-b last:border-0">
-                  <td className="py-2 pr-4">
-                    <span
-                      className="rounded px-2 py-0.5 text-xs font-medium text-white"
-                      style={{ background: GROUP_COLOR[r.group] || "#94a3b8" }}
-                    >
-                      {r.group}
+              {finance.breakdown.map((row, index) => (
+                <tr
+                  key={`${row.group}-${row.type}-${index}`}
+                  className="border-b border-slate-100 last:border-0 hover:bg-[#f8faf9]"
+                >
+                  <td className="py-3 pr-4">
+                    <span className="inline-flex items-center gap-2 rounded-full bg-[#f4f7f4] px-3 py-1 text-xs font-medium text-slate-600">
+                      <span
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{
+                          backgroundColor: GROUP_COLOR[row.group] ?? "#8b9792",
+                        }}
+                      />
+                      {row.group}
                     </span>
                   </td>
-                  <td className="py-2 pr-4 text-slate-600">{r.type}</td>
+                  <td className="py-3 pr-4 text-slate-500">{row.type}</td>
                   <td
-                    className={`py-2 text-right font-medium ${
-                      r.amount < 0 ? "text-red-600" : "text-green-600"
-                    }`}
+                    className={`py-3 text-right font-semibold ${row.amount < 0 ? "text-[#c28255]" : "text-[#147d73]"}`}
                   >
-                    {fmtUSD(r.amount)}
+                    {fmtUSD(row.amount)}
                   </td>
                 </tr>
               ))}

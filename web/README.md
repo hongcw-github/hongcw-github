@@ -46,3 +46,19 @@ npm run dev
 - 기간 선택(7~90일) · 새로고침
 
 <!-- redeploy: wire NEXT_PUBLIC_API_URL -->
+
+## Seller Workspace 개편
+
+- 반응형 탐색, 일별/주별 매출·수량 차트, SKU 비중과 파레토 분석
+- 5분마다 서버 응답 재확인, 포커스/연결 복구 시 재조회, 명시적 새로고침 상태·오류 표시
+- 조회 시각과 집계 생성 시각·최근 거래 날짜를 구분. 브라우저 재조회가 Amazon 수집 완료를 의미하지는 않음
+- 지역 약칭 통합, 같은 SKU의 재고 합산, 최근 기간 기준 재고 커버일
+- 원가 입력 누락 표시. 원가와 통화 표시 설정은 현재 브라우저에 저장되며 통화 환산 없음
+- 미연동 광고 성과는 샘플값 대신 빈 상태로 표시. 정산 차감 광고비는 별도 제공
+- CSV 내보내기와 접근성 개선
+
+Node.js 22로 실행합니다. `npm ci`, `npm run typecheck`, `npm test`, `npm run build`로 검증할 수 있습니다.
+`NEXT_PUBLIC_API_URL`이 없으면 기존 Cloud Run API를 사용합니다. 자격증명은 프런트엔드 환경변수에 넣지 않습니다.
+
+백엔드는 `python -m unittest api.test_main`으로 캐시 메타데이터와 전체 항목 새로고침을 검증합니다.
+Cloud Run과 Vercel은 기존 production 브랜치 변경에 각각 연결되어 있습니다.
