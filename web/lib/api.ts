@@ -1,6 +1,7 @@
 import type { DashboardData } from "./types";
 const BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
+  // The legacy API_URL setting still points at the retired Render service.
+  process.env.NEXT_PUBLIC_SELLER_API_URL ||
   "https://hongcw-github-419197548925.us-east1.run.app";
 const KEY_STORE = "dash_key";
 let displayCurrency = "CAD";
