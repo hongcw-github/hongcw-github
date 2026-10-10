@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Amazon 셀러 대시보드",
-  description: "Amazon SP-API 기반 셀러 대시보드",
+  title: "OLYVIA · Seller Workspace",
+  description: "OLYVIA의 매출, 재고, 정산과 광고 성과를 연결하는 Amazon 셀러 워크스페이스",
 };
 
 export default function RootLayout({

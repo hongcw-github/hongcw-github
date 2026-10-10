@@ -29,3 +29,6 @@ web/.next/
 web/out/
 web/.env.local
 next-env.d.ts
+
+# TypeScript build cache
+*.tsbuildinfo

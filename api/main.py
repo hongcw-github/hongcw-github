@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 import pandas as pd
 from fastapi import FastAPI, Header, HTTPException, Query
@@ -57,10 +58,24 @@ _CACHE_TTL = int(os.getenv("CACHE_TTL_MINUTES", "120")) * 60
 # Firestore 에서 채워온 항목은 짧게만 신선 취급 → 인스턴스들이 크론이 갱신한
 # 최신 Firestore 데이터를 자주(기본 5분) 다시 읽어오게 한다 (읽기는 싸고 빠름).
 _FS_WARM_TTL = int(os.getenv("FS_WARM_TTL_SECONDS", "300"))
-_cache: dict[int, tuple[float, dict]] = {}
+_cache: dict[int, tuple[float, dict, int]] = {}
 
 _TZ = {"CA": "America/Toronto", "US": "America/Los_Angeles", "MX": "America/Mexico_City",
        "UK": "Europe/London", "GB": "Europe/London", "DE": "Europe/Berlin", "JP": "Asia/Tokyo"}
+_CURRENCY = {"CA": "CAD", "US": "USD", "MX": "MXN", "UK": "GBP", "GB": "GBP",
+             "DE": "EUR", "FR": "EUR", "IT": "EUR", "ES": "EUR", "JP": "JPY"}
+
+
+def _iso_timestamp(ts: float | None = None) -> str:
+    return datetime.fromtimestamp(ts if ts is not None else time.time(), timezone.utc).isoformat()
+
+
+def _response(payload: dict, *, cached: bool, source: str, cache_saved_at=None) -> dict:
+    """조회 시각과 원본 집계 시각을 구분하고 저장된 payload 는 변경하지 않는다."""
+    metadata = {**payload.get("metadata", {}), "served_at": _iso_timestamp(), "cache_source": source}
+    if cache_saved_at:
+        metadata["cache_saved_at"] = _iso_timestamp(cache_saved_at)
+    return {**payload, "cached": cached, "metadata": metadata}
 
 # ── 증분 주문 패칭: 과거는 보관(인메모리 히스토리)하고 최근 며칠만 다시 받는다 ──
 _ORDERS_OVERLAP_DAYS = 10   # 최근 이 기간만 새로 받아 상태변경(취소/배송) 반영
@@ -233,6 +248,7 @@ def health():
 def dashboard(
     days: int = Query(30, ge=1, le=365),
     refresh: bool = False,
+    refresh_sources: bool = False,
     key: str | None = Query(None),
     x_dashboard_key: str | None = Header(None),
 ):
@@ -246,16 +262,18 @@ def dashboard(
     hit = _cache.get(days)
 
     # 신선한 캐시 → 즉시
-    if hit and not refresh and (now - hit[0] < hit[2]):
-        return {**hit[1], "cached": True}
+    force_refresh = refresh or refresh_sources
+    if hit and not force_refresh and (now - hit[0] < hit[2]):
+        return _response(hit[1], cached=True, source="memory")
 
     # 인메모리 미스(콜드 인스턴스 등) → Firestore 의 마지막 성공 빌드를 즉시 서빙.
     # 무거운 재빌드는 예열 크론(refresh=1)만 수행하므로 사용자는 기다리지 않는다.
-    if not refresh:
+    if not force_refresh:
         fs = firestore_cache.load_dashboard(days)
         if fs is not None:
-            _cache[days] = (now, fs["payload"], _FS_WARM_TTL)
-            return {**fs["payload"], "cached": True}
+            payload = _response(fs["payload"], cached=True, source="firestore", cache_saved_at=fs.get("ts"))
+            _cache[days] = (now, payload, _FS_WARM_TTL)
+            return payload
 
     # 캐시 없음/만료 → 요청 안에서 동기 빌드.
     # (Cloud Run 은 '요청 처리 중'에만 CPU 를 할당하므로 백그라운드 스레드는
@@ -263,9 +281,13 @@ def dashboard(
     #  예열 크론이 만료 전에 미리 채워 두므로 실제 사용자는 거의 기다리지 않는다.)
     with _build_lock:  # 동시 빌드는 SP-API throttle 을 유발 → 한 번에 하나씩
         hit = _cache.get(days)  # 락 대기 중 다른 요청이 이미 만들었을 수 있음
-        if hit and not refresh and (time.time() - hit[0] < hit[2]):
-            return {**hit[1], "cached": True}
-        return _store(days, _build_dashboard(days))
+        if hit and not force_refresh and (time.time() - hit[0] < hit[2]):
+            return _response(hit[1], cached=True, source="memory")
+        # 크론의 여러 기간 집계(refresh=1)는 재고·정산 원본 캐시를 공유한다.
+        # 사용자가 요청한 전체 수집만 원본까지 무효화한다.
+        if refresh_sources:
+            _invalidate_source_caches(days)
+        return _response(_store(days, _build_dashboard(days)), cached=False, source="build")
 
 
 def _store(days: int, payload: dict) -> dict:
@@ -303,6 +325,18 @@ def _inventory_cached(settings):
 # 짧은 기간(7·14·60일)은 날짜로 '잘라서' 재사용한다 → API 재호출 없이 즉시.
 _fin_raw: dict[int, tuple] = {}     # fetch_window -> (ts, fin, fin_err, bd, bd_err)
 _fin_lock = threading.Lock()
+
+
+def _invalidate_source_caches(days: int) -> None:
+    """명시적 새로고침은 주문뿐 아니라 현재 재고·정산도 다시 수집한다.
+
+    호출자는 _build_lock 을 보유하므로 다른 대시보드 빌드와 경합하지 않는다.
+    """
+    global _inv_cache
+    with _inv_lock:
+        _inv_cache = None
+    with _fin_lock:
+        _fin_raw.pop(_fin_fetch_window(days), None)
 
 
 def _fin_fetch_window(days: int) -> int:
@@ -372,10 +406,17 @@ def _fetch_live(days: int):
 def _build_dashboard(days: int):
     settings, orders, inventory, finances, breakdown, ads_data, errors = _fetch_live(days)
     start = pd.Timestamp.now() - pd.Timedelta(days=days)
-    return _assemble_dashboard(
+    payload = _assemble_dashboard(
         orders, inventory, finances, breakdown, ads_data, settings,
         label=days, window_start=start, window_end=None, errors=errors,
     )
+    # 캐시 재사용 시 수집 시각은 집계 시각보다 오래될 수 있다.
+    if _inv_cache and not errors.get("inv"):
+        payload["metadata"]["inventory_fetched_at"] = _iso_timestamp(_inv_cache[0])
+    fin_hit = _fin_raw.get(_fin_fetch_window(days))
+    if fin_hit and not (errors.get("fin") or errors.get("bd")):
+        payload["metadata"]["finance_fetched_at"] = _iso_timestamp(fin_hit[0])
+    return payload
 
 
 def _assemble_dashboard(orders, inventory, finances, breakdown, ads_data, settings,
@@ -491,6 +532,15 @@ def _assemble_dashboard(orders, inventory, finances, breakdown, ads_data, settin
     return {
         "mode": "mock" if settings.use_mock else "live",
         "marketplace": settings.marketplace,
+        "currency": _CURRENCY.get(settings.marketplace.upper()),
+        "currency_source": "marketplace_inferred",
+        "metadata": {
+            "generated_at": _iso_timestamp(),
+            # Amazon 자체 처리/수집 완료 시각은 현재 소스에서 제공하지 않는다.
+            "source_updated_at": None,
+            "latest_order_date": max((r["date"] for r in daily_sales), default=None),
+            "latest_settlement_date": max((r["date"] for r in fin_daily if r.get("date")), default=None),
+        },
         "days": label,
         "kpis": {
             "revenue": round(revenue, 2),
@@ -517,7 +567,7 @@ def _assemble_dashboard(orders, inventory, finances, breakdown, ads_data, settin
             "excludes": ["인바운드 배송", "관세/포장", "remittance 세금"],
         },
         "ads": {
-            "mode": "live" if settings.has_ads_credentials else "mock",
+            "mode": "live" if settings.has_ads_credentials and ads_data is not None else "mock",
             "settlement_spend": settlement_ad_spend,  # 정산에서 차감된 실제 광고비(순이익에 이미 반영)
             "summary": (ads_data or {}).get("summary", {}),
             "daily": _records((ads_data or {}).get("daily")) if ads_data else [],
@@ -563,6 +613,8 @@ def _build_history(range_key: str) -> dict:
         label=range_key, window_start=wstart, window_end=wend, errors=None,
     )
     payload["range"] = range_key
+    payload["metadata"]["assembled_at"] = payload["metadata"].pop("generated_at")
+    # 역사 원본의 수집시각은 Firestore 헬퍼가 반환하지 않으므로 표시하지 않는다.
     return payload
 
 
@@ -580,7 +632,7 @@ def history(
     now = time.time()
     hit = _history_cache.get(range)
     if hit and not refresh and now - hit[0] < _HIST_TTL:
-        return {**hit[1], "cached": True}
+        return _response(hit[1], cached=True, source="memory")
     payload = _build_history(range)
-    _history_cache[range] = (now, payload)
-    return payload
+    _history_cache[range] = (time.time(), payload)
+    return _response(payload, cached=False, source="history")

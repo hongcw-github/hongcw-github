@@ -6,7 +6,14 @@ export type CostMap = Record<string, number>;
 export function loadCosts(): CostMap {
   if (typeof window === "undefined") return {};
   try {
-    return JSON.parse(window.localStorage.getItem(STORE) || "{}");
+    const raw = JSON.parse(window.localStorage.getItem(STORE) || "{}");
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    return Object.fromEntries(
+      Object.entries(raw).filter(
+        ([, value]) =>
+          typeof value === "number" && Number.isFinite(value) && value >= 0,
+      ),
+    ) as CostMap;
   } catch {
     return {};
   }
