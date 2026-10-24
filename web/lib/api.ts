@@ -1,4 +1,4 @@
-import type { DashboardData } from "./types";
+import type { DashboardData, InventoryHistoryData } from "./types";
 const BASE =
   // The legacy API_URL setting still points at the retired Render service.
   process.env.NEXT_PUBLIC_SELLER_API_URL ||
@@ -26,7 +26,10 @@ export class UnauthorizedError extends Error {
     this.name = "UnauthorizedError";
   }
 }
-async function request(path: string): Promise<DashboardData> {
+async function request<T = DashboardData>(
+  path: string,
+  dashboard = true,
+): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 300000);
   try {
@@ -41,6 +44,7 @@ async function request(path: string): Promise<DashboardData> {
     if (!response.ok) throw new Error(`서버 응답 오류 (${response.status})`);
     const data = await response.json();
     if (
+      dashboard &&
       !data.building &&
       (!data.kpis || !data.sales || !data.finance || !data.inventory)
     )
@@ -53,6 +57,12 @@ async function request(path: string): Promise<DashboardData> {
   } finally {
     clearTimeout(timeout);
   }
+}
+export function fetchInventoryHistory(days: number) {
+  return request<InventoryHistoryData>(
+    `/api/inventory/history?days=${days}`,
+    false,
+  );
 }
 export function fetchDashboard(days: number, refresh = false) {
   return request(
