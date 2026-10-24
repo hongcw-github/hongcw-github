@@ -1,6 +1,7 @@
 """Daily observations: calendar boundaries, zero stock, gaps and durable writes."""
 import json
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -53,6 +54,27 @@ class FakeDB:
 
 
 class DailyInventoryTests(unittest.TestCase):
+    def test_transient_client_startup_error_does_not_disable_storage(self):
+        cache = history.firestore_cache
+        client = object()
+        with patch.object(cache, "_client", None), patch.object(cache, "_disabled", False), patch(
+            "google.cloud.firestore.Client", side_effect=[RuntimeError("temporary"), client]
+        ), patch("builtins.print"):
+            self.assertIsNone(cache._db())
+            self.assertIs(cache._db(), client)
+            self.assertFalse(cache._disabled)
+
+    def test_concurrent_startup_creates_one_firestore_client(self):
+        cache = history.firestore_cache
+        client = object()
+        with patch.object(cache, "_client", None), patch.object(cache, "_disabled", False), patch(
+            "google.cloud.firestore.Client", return_value=client
+        ) as create:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                results = list(pool.map(lambda _: cache._db(), range(16)))
+            self.assertTrue(all(value is client for value in results))
+            self.assertEqual(create.call_count, 1)
+
     def test_fallback_report_does_not_archive_unreported_quantities_as_zero(self):
         from src.sp_api_client import _parse_fba_inventory
         inv = _parse_fba_inventory("seller-sku\tQuantity Available\nA\t0\nB\t12\n")

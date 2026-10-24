@@ -5,6 +5,8 @@ import json
 import math
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from . import firestore_cache
 
@@ -52,8 +54,6 @@ def save_snapshot(snapshot: dict) -> bool:
     Returning False means an identical/newer observation is already durable.
     Storage failures propagate: callers must not claim persistence succeeded.
     """
-    from google.cloud import firestore
-
     db = firestore_cache._db()
     if db is None:
         raise RuntimeError("Inventory history storage is unavailable")
@@ -78,8 +78,6 @@ def save_snapshot(snapshot: dict) -> bool:
 
 
 def load_history(marketplace: str, days: int, *, now: datetime | None = None) -> dict:
-    from google.cloud.firestore_v1.base_query import FieldFilter
-
     db = firestore_cache._db()
     if db is None:
         raise RuntimeError("Inventory history storage is unavailable")
@@ -94,6 +92,14 @@ def load_history(marketplace: str, days: int, *, now: datetime | None = None) ->
     for document in query.stream():
         data = document.to_dict()
         data["items"] = json.loads(data.pop("items_json"))
+        if "quantity_fields" not in data:
+            # Initial observations did not capture report column availability.
+            # Keep their available stock, but do not assert fallback defaults.
+            data["quantity_fields"] = ["fulfillable_quantity"]
+            for key in QUANTITIES[1:]:
+                data["totals"][key] = None
+                for item in data["items"]:
+                    item[key] = None
         records.append(data)
     recorded = {row["date"] for row in records}
     missing = [(start + timedelta(days=i)).isoformat() for i in range(days)
