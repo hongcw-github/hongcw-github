@@ -6,6 +6,7 @@ Next.js 프론트엔드가 이 API 를 호출해 대시보드를 그린다.
 from __future__ import annotations
 
 import os
+import logging
 import sys
 import threading
 import time
@@ -20,6 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src import firestore_cache  # noqa: E402
 from src import repository  # noqa: E402
+from src import inventory_history  # noqa: E402
 from src.config import load_settings  # noqa: E402
 from src.costs import load_costs  # noqa: E402
 
@@ -317,8 +319,55 @@ def _inventory_cached(settings):
         if _inv_cache and now - _inv_cache[0] < _CACHE_TTL:
             return _inv_cache[1]
         inv = repository.get_inventory(settings)
-        _inv_cache = (time.time(), inv)
+        collected_at = time.time()
+        _inv_cache = (collected_at, inv)
+        if not settings.use_mock:
+            try:
+                inventory_history.save_snapshot(inventory_history.build_snapshot(
+                    _records(inv), settings.marketplace, collected_at,
+                ))
+            except Exception:
+                logging.exception("Daily inventory persistence failed")
         return inv
+
+
+def _check_inventory_key(key):
+    if _DASHBOARD_PASSWORD and key != _DASHBOARD_PASSWORD:
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+
+@app.get("/api/inventory/history")
+def inventory_daily_history(days: int = Query(30, ge=1, le=366),
+                            x_dashboard_key: str | None = Header(None)):
+    _check_inventory_key(x_dashboard_key)
+    settings = load_settings()
+    try:
+        return inventory_history.load_history(settings.marketplace, days)
+    except Exception:
+        logging.exception("Daily inventory history read failed")
+        raise HTTPException(status_code=503, detail="일별 재고 기록을 조회하지 못했습니다.")
+
+
+@app.post("/api/inventory/snapshot")
+def inventory_daily_snapshot(x_dashboard_key: str | None = Header(None)):
+    """Hourly scheduler entry point; no dependence on sales/finance success."""
+    _check_inventory_key(x_dashboard_key)
+    settings = load_settings()
+    if settings.use_mock:
+        raise HTTPException(status_code=409, detail="실제 Amazon 재고 연결이 필요합니다.")
+    try:
+        with _build_lock:
+            inv = _inventory_cached(settings)
+            snapshot = inventory_history.build_snapshot(
+                _records(inv), settings.marketplace, _inv_cache[0],
+            )
+            # Retry persistence even when a previous collection's write failed.
+            inventory_history.save_snapshot(snapshot)
+        return {"saved": True, "date": snapshot["date"],
+                "collected_at": snapshot["collected_at"], "sku_count": len(snapshot["items"])}
+    except Exception:
+        logging.exception("Scheduled inventory snapshot failed")
+        raise HTTPException(status_code=503, detail="일별 재고 기록을 저장하지 못했습니다.")
 
 
 # 정산(finances)·상세(breakdown)는 넓은 기간으로 한 번만 받아 캐시하고,

@@ -13,18 +13,26 @@ import {
 import type { DashboardData } from "@/lib/types";
 import { shortName } from "@/lib/api";
 import { Card, ErrorBanner, Metric } from "./ui";
+import InventoryHistory from "./InventoryHistory";
 
 type InventoryItem = DashboardData["inventory"]["items"][number];
 
-export default function InventoryTab({
-  inventory,
-  bySku = [],
-  days,
-}: {
+type InventoryProps = {
   inventory: DashboardData["inventory"];
   bySku?: DashboardData["sales"]["by_sku"];
   days?: number;
-}) {
+};
+
+export default function InventoryTab(props: InventoryProps) {
+  return (
+    <div className="grid grid-cols-1 gap-5">
+      <InventoryHistory />
+      <CurrentInventory {...props} />
+    </div>
+  );
+}
+
+function CurrentInventory({ inventory, bySku = [], days }: InventoryProps) {
   if (inventory.error)
     return <ErrorBanner label="재고" error={inventory.error} />;
   if (inventory.items.length === 0)

@@ -126,3 +126,23 @@ export interface DashboardData {
     error: ApiError | null;
   };
 }
+
+export interface InventoryHistoryData {
+  marketplace: string;
+  timezone: string;
+  start_date: string;
+  end_date: string;
+  missing_dates: string[];
+  policy: string;
+  records: Array<{
+    date: string;
+    collected_at: string;
+    items: DashboardData["inventory"]["items"];
+    totals: {
+      fulfillable_quantity: number;
+      reserved_quantity: number;
+      inbound_quantity: number;
+      total_quantity: number;
+    };
+  }>;
+}
