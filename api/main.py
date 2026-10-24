@@ -358,6 +358,16 @@ def inventory_daily_snapshot(x_dashboard_key: str | None = Header(None)):
         raise HTTPException(status_code=409, detail="실제 Amazon 재고 연결이 필요합니다.")
     try:
         with _build_lock:
+            # A cold instance must not recreate reports when another instance
+            # already durably captured today's inventory within the source TTL.
+            # Preserve the original collection time instead of inventing a new one.
+            existing = inventory_history.load_history(settings.marketplace, 1)["records"]
+            if existing:
+                latest = existing[-1]
+                age = time.time() - datetime.fromisoformat(latest["collected_at"]).timestamp()
+                if 0 <= age < _CACHE_TTL:
+                    return {"saved": True, "cached": True, "date": latest["date"],
+                            "collected_at": latest["collected_at"], "sku_count": len(latest["items"])}
             inv = _inventory_cached(settings)
             snapshot = inventory_history.build_snapshot(
                 _records(inv), settings.marketplace, _inv_cache[0],

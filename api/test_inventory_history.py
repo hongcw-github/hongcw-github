@@ -1,6 +1,7 @@
 """Daily observations: calendar boundaries, zero stock, gaps and durable writes."""
 import json
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -53,6 +54,27 @@ class FakeDB:
 
 
 class DailyInventoryTests(unittest.TestCase):
+    def test_transient_client_startup_error_does_not_disable_storage(self):
+        cache = history.firestore_cache
+        client = object()
+        with patch.object(cache, "_client", None), patch.object(cache, "_disabled", False), patch(
+            "google.cloud.firestore.Client", side_effect=[RuntimeError("temporary"), client]
+        ), patch("builtins.print"):
+            self.assertIsNone(cache._db())
+            self.assertIs(cache._db(), client)
+            self.assertFalse(cache._disabled)
+
+    def test_concurrent_startup_creates_one_firestore_client(self):
+        cache = history.firestore_cache
+        client = object()
+        with patch.object(cache, "_client", None), patch.object(cache, "_disabled", False), patch(
+            "google.cloud.firestore.Client", return_value=client
+        ) as create:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                results = list(pool.map(lambda _: cache._db(), range(16)))
+            self.assertTrue(all(value is client for value in results))
+            self.assertEqual(create.call_count, 1)
+
     def test_fallback_report_does_not_archive_unreported_quantities_as_zero(self):
         from src.sp_api_client import _parse_fba_inventory
         inv = _parse_fba_inventory("seller-sku\tQuantity Available\nA\t0\nB\t12\n")
@@ -134,12 +156,24 @@ class DailyInventoryTests(unittest.TestCase):
     def test_storage_failure_is_not_reported_as_success(self):
         with patch.object(main, "_DASHBOARD_PASSWORD", None), patch.object(
             main, "load_settings", return_value=SimpleNamespace(use_mock=False, marketplace="CA")
-        ), patch.object(main, "_inventory_cached", return_value=pd.DataFrame([row()])), patch.object(
+        ), patch.object(history, "load_history", return_value={"records": []}), patch.object(main, "_inventory_cached", return_value=pd.DataFrame([row()])), patch.object(
             main, "_inv_cache", (1000, object())
         ), patch.object(history, "save_snapshot", side_effect=RuntimeError("unavailable")), patch.object(main.logging, "exception"):
             with self.assertRaises(HTTPException) as result:
                 main.inventory_daily_snapshot(None)
         self.assertEqual(result.exception.status_code, 503)
+
+    def test_cold_instance_reuses_durable_observation_without_changing_timestamp(self):
+        snapshot = history.build_snapshot([row(quantity=12)], "CA", datetime.now(timezone.utc).timestamp())
+        with patch.object(main, "_DASHBOARD_PASSWORD", None), patch.object(
+            main, "load_settings", return_value=SimpleNamespace(use_mock=False, marketplace="CA")
+        ), patch.object(history, "load_history", return_value={"records": [snapshot]}), patch.object(
+            main, "_inventory_cached"
+        ) as collect:
+            result = main.inventory_daily_snapshot(None)
+        collect.assert_not_called()
+        self.assertTrue(result["cached"])
+        self.assertEqual(result["collected_at"], snapshot["collected_at"])
 
     def test_mock_inventory_never_enters_durable_history(self):
         main._inv_cache = None

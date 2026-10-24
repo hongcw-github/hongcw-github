@@ -13,28 +13,32 @@ from __future__ import annotations
 import json
 import os
 import time
+import threading
 
 _ENABLED = os.getenv("FIRESTORE_CACHE", "on").lower() != "off"
 _COLLECTION = os.getenv("FIRESTORE_COLLECTION", "dashboards")
 
 _client = None
 _disabled = not _ENABLED
+_client_lock = threading.Lock()
 
 
 def _db():
     global _client, _disabled
     if _disabled:
         return None
-    if _client is not None:
-        return _client
-    try:
-        from google.cloud import firestore  # lazy import; optional dependency
-        _client = firestore.Client()
-        return _client
-    except Exception as e:  # noqa: BLE001
-        print(f"[firestore_cache] disabled ({e})")
-        _disabled = True
-        return None
+    with _client_lock:
+        if _client is not None:
+            return _client
+        try:
+            from google.cloud import firestore  # lazy import; optional dependency
+            _client = firestore.Client()
+            return _client
+        except Exception as e:  # noqa: BLE001
+            # Startup credentials/metadata can be temporarily unavailable.
+            # Do not permanently disable durable history for this instance.
+            print(f"[firestore_cache] initialization failed ({type(e).__name__})")
+            return None
 
 
 def load_dashboard(days: int):
