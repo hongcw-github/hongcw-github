@@ -13,17 +13,21 @@ TIMEZONES = {"CA": "America/Toronto", "US": "America/Los_Angeles", "MX": "Americ
 QUANTITIES = ("fulfillable_quantity", "reserved_quantity", "inbound_quantity", "total_quantity")
 
 
-def build_snapshot(rows: list[dict], marketplace: str, collected_at: float) -> dict:
+def build_snapshot(rows: list[dict], marketplace: str, collected_at: float,
+                   quantity_fields: list[str] | None = None) -> dict:
     tz = TIMEZONES.get(marketplace, "UTC")
     instant = datetime.fromtimestamp(collected_at, timezone.utc)
+    reported = set(QUANTITIES if quantity_fields is None else quantity_fields)
     grouped: dict[str, dict] = {}
     for row in rows:
         sku = str(row.get("sku") or "").strip()
         if not sku:
             raise ValueError("Inventory row has no SKU")
         item = grouped.setdefault(sku, {"sku": sku, "product_name": str(row.get("product_name") or sku),
-                                       **{key: 0 for key in QUANTITIES}})
+                                       **{key: 0 if key in reported else None for key in QUANTITIES}})
         for key in QUANTITIES:
+            if key not in reported:
+                continue
             value = float(row.get(key, 0))
             if not math.isfinite(value) or value < 0 or not value.is_integer():
                 raise ValueError(f"Invalid inventory quantity: {key}")
@@ -32,7 +36,9 @@ def build_snapshot(rows: list[dict], marketplace: str, collected_at: float) -> d
             "marketplace": marketplace, "timezone": tz,
             "collected_at": instant.isoformat(), "source": "sp_api_inventory_snapshot",
             "items": sorted(grouped.values(), key=lambda item: item["sku"]),
-            "totals": {key: sum(item[key] for item in grouped.values()) for key in QUANTITIES}}
+            "quantity_fields": sorted(reported),
+            "totals": {key: sum(item[key] for item in grouped.values()) if key in reported else None
+                       for key in QUANTITIES}}
 
 
 def _days(db, marketplace: str):

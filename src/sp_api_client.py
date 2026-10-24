@@ -360,7 +360,7 @@ def _parse_fba_inventory(text: str) -> pd.DataFrame:
     product_name = col("product-name")
     product_name = product_name.where(product_name.notna(), sku)
 
-    return pd.DataFrame(
+    result = pd.DataFrame(
         {
             "sku": sku,
             "asin": col("asin"),
@@ -371,6 +371,19 @@ def _parse_fba_inventory(text: str) -> pd.DataFrame:
             "total_quantity": total,
         }
     )
+    # A fallback AFN report contains available stock only. Preserve which
+    # quantities were actually reported, instead of archiving defaults as fact.
+    fields = []
+    if any(name in df.columns for name in ("afn-fulfillable-quantity", "Quantity Available", "quantity-available")):
+        fields.append("fulfillable_quantity")
+    if "afn-reserved-quantity" in df.columns:
+        fields.append("reserved_quantity")
+    if all(name in df.columns for name in ("afn-inbound-working-quantity", "afn-inbound-shipped-quantity", "afn-inbound-receiving-quantity")):
+        fields.append("inbound_quantity")
+    if "afn-total-quantity" in df.columns:
+        fields.append("total_quantity")
+    result.attrs["quantity_fields"] = fields
+    return result
 
 
 def finances(settings: Settings, days: int = 90) -> pd.DataFrame:
