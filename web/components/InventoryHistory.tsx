@@ -59,7 +59,7 @@ export default function InventoryHistory() {
       <p className="mb-4 text-sm leading-6 text-slate-500">
         자동 수집 시 날짜별로 저장하며, 같은 날은 마지막 정상 수집값을
         보관합니다. 기록이 없는 날과 실제 재고 0개를 구분합니다. 일 마감 확정
-        수량은 아닙니다.
+        수량은 아닙니다. 보고서에 없는 수량 항목은 —로 표시합니다.
       </p>
       <div className="mb-5 flex flex-wrap items-end gap-3">
         <label className="text-xs text-slate-500">
@@ -112,7 +112,7 @@ export default function InventoryHistory() {
         <>
           <p className="mb-4 text-xs text-slate-500">
             {data.start_date} — {data.end_date} · {data.timezone} 기준 · 기록{" "}
-            {data.records.length}일 / 미수집 {data.missing_dates.length}일
+            {data.records.length}일 / 기록 없음 {data.missing_dates.length}일
           </p>
           {data.records.length === 0 ? (
             <div className="rounded-xl bg-slate-50 p-5 text-sm leading-6 text-slate-600">

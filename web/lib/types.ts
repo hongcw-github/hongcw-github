@@ -137,12 +137,19 @@ export interface InventoryHistoryData {
   records: Array<{
     date: string;
     collected_at: string;
-    items: DashboardData["inventory"]["items"];
+    items: Array<{
+      sku: string;
+      product_name: string;
+      fulfillable_quantity: number | null;
+      reserved_quantity: number | null;
+      inbound_quantity: number | null;
+      total_quantity: number | null;
+    }>;
     totals: {
-      fulfillable_quantity: number;
-      reserved_quantity: number;
-      inbound_quantity: number;
-      total_quantity: number;
+      fulfillable_quantity: number | null;
+      reserved_quantity: number | null;
+      inbound_quantity: number | null;
+      total_quantity: number | null;
     };
   }>;
 }

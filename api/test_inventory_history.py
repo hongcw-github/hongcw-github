@@ -53,6 +53,35 @@ class FakeDB:
 
 
 class DailyInventoryTests(unittest.TestCase):
+    def test_fallback_report_does_not_archive_unreported_quantities_as_zero(self):
+        from src.sp_api_client import _parse_fba_inventory
+        inv = _parse_fba_inventory("seller-sku\tQuantity Available\nA\t0\nB\t12\n")
+        snapshot = history.build_snapshot(main._records(inv), "CA", 1000, inv.attrs["quantity_fields"])
+        self.assertEqual(snapshot["totals"]["fulfillable_quantity"], 12)
+        self.assertEqual(snapshot["items"][0]["fulfillable_quantity"], 0)
+        self.assertIsNone(snapshot["totals"]["reserved_quantity"])
+        self.assertIsNone(snapshot["totals"]["inbound_quantity"])
+        self.assertIsNone(snapshot["totals"]["total_quantity"])
+
+    def test_full_report_retains_reported_zero_quantities(self):
+        from src.sp_api_client import _parse_fba_inventory
+        inv = _parse_fba_inventory(
+            "sku\tafn-fulfillable-quantity\tafn-reserved-quantity\tafn-inbound-working-quantity\t"
+            "afn-inbound-shipped-quantity\tafn-inbound-receiving-quantity\tafn-total-quantity\nA\t4\t0\t0\t0\t0\t4\n"
+        )
+        snapshot = history.build_snapshot(main._records(inv), "CA", 1000, inv.attrs["quantity_fields"])
+        self.assertEqual(snapshot["totals"]["reserved_quantity"], 0)
+        self.assertEqual(snapshot["totals"]["inbound_quantity"], 0)
+
+    def test_dashboard_collection_passes_field_availability_to_storage(self):
+        inv = pd.DataFrame([row(quantity=3)])
+        inv.attrs["quantity_fields"] = ["fulfillable_quantity"]
+        main._inv_cache = None
+        with patch.object(main.repository, "get_inventory", return_value=inv), patch.object(history, "save_snapshot") as save:
+            main._inventory_cached(SimpleNamespace(use_mock=False, marketplace="CA"))
+        self.assertIsNone(save.call_args.args[0]["totals"]["reserved_quantity"])
+        main._inv_cache = None
+
     def test_canada_local_date_not_utc_and_zero_sku_is_retained(self):
         snapshot = history.build_snapshot([row()], "CA", instant("2026-10-24T02:00:00+00:00"))
         self.assertEqual(snapshot["date"], "2026-10-23")

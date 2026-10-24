@@ -325,6 +325,7 @@ def _inventory_cached(settings):
             try:
                 inventory_history.save_snapshot(inventory_history.build_snapshot(
                     _records(inv), settings.marketplace, collected_at,
+                    inv.attrs.get("quantity_fields", []),
                 ))
             except Exception:
                 logging.exception("Daily inventory persistence failed")
@@ -360,6 +361,7 @@ def inventory_daily_snapshot(x_dashboard_key: str | None = Header(None)):
             inv = _inventory_cached(settings)
             snapshot = inventory_history.build_snapshot(
                 _records(inv), settings.marketplace, _inv_cache[0],
+                inv.attrs.get("quantity_fields", []),
             )
             # Retry persistence even when a previous collection's write failed.
             inventory_history.save_snapshot(snapshot)
