@@ -156,12 +156,24 @@ class DailyInventoryTests(unittest.TestCase):
     def test_storage_failure_is_not_reported_as_success(self):
         with patch.object(main, "_DASHBOARD_PASSWORD", None), patch.object(
             main, "load_settings", return_value=SimpleNamespace(use_mock=False, marketplace="CA")
-        ), patch.object(main, "_inventory_cached", return_value=pd.DataFrame([row()])), patch.object(
+        ), patch.object(history, "load_history", return_value={"records": []}), patch.object(main, "_inventory_cached", return_value=pd.DataFrame([row()])), patch.object(
             main, "_inv_cache", (1000, object())
         ), patch.object(history, "save_snapshot", side_effect=RuntimeError("unavailable")), patch.object(main.logging, "exception"):
             with self.assertRaises(HTTPException) as result:
                 main.inventory_daily_snapshot(None)
         self.assertEqual(result.exception.status_code, 503)
+
+    def test_cold_instance_reuses_durable_observation_without_changing_timestamp(self):
+        snapshot = history.build_snapshot([row(quantity=12)], "CA", datetime.now(timezone.utc).timestamp())
+        with patch.object(main, "_DASHBOARD_PASSWORD", None), patch.object(
+            main, "load_settings", return_value=SimpleNamespace(use_mock=False, marketplace="CA")
+        ), patch.object(history, "load_history", return_value={"records": [snapshot]}), patch.object(
+            main, "_inventory_cached"
+        ) as collect:
+            result = main.inventory_daily_snapshot(None)
+        collect.assert_not_called()
+        self.assertTrue(result["cached"])
+        self.assertEqual(result["collected_at"], snapshot["collected_at"])
 
     def test_mock_inventory_never_enters_durable_history(self):
         main._inv_cache = None
